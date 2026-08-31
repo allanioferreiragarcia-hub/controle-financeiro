@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Controle Financeiro — Painel Familiar (Online)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkBg: '#0f1117',
+                        cardBg: '#131822',
+                        borderCol: '#1e293b'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCFgCwKtUssuKLH0hdHR3jJud8_PISn-pI",
+            authDomain: "controle-financeiro-a2df2.firebaseapp.com",
+            projectId: "controle-financeiro-a2df2",
+            storageBucket: "controle-financeiro-a2df2.appfirebasestorage.app",
+            messagingSenderId: "356150237120",
+            appId: "1:356150237120:web:4507e734e41e28ee81da25",
+            measurementId: "G-M2QKTJ8OJ7"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const dbCloud = getFirestore(app);
+
+        window.cloudDb = { dbCloud, doc, setDoc, getDoc };
+        window.iniciarSistemaCloud();
+    </script>
+</head>
+<body class="bg-darkBg text-slate-100 min-h-screen font-sans antialiased flex flex-col">
+
+    <!-- TELA DE SELEÇÃO DE PERFIL -->
+    <div id="telaPerfis" class="fixed inset-0 bg-darkBg z-50 flex items-center justify-center p-4">
+        <div class="bg-cardBg border border-borderCol w-full max-w-md p-8 rounded-2xl space-y-6 shadow-2xl text-center">
+            <div>
+                <h1 class="text-2xl font-bold text-white">Carregando Sistema...</h1>
+                <p class="text-sm text-slate-400 mt-1">Conectando à base de dados na nuvem.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- APLICAÇÃO PRINCIPAL -->
+    <div id="appPrincipal" class="flex flex-1 flex-col md:flex-row hidden">
+        
+        <!-- Sidebar -->
+        <aside class="w-full md:w-64 bg-cardBg border-b md:border-b-0 md:border-r border-borderCol p-5 flex flex-col justify-between relative">
+            <div class="space-y-6">
+                <div>
+                    <div class="flex justify-between items-center">
+                        <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                            <span class="inline-block w-3 h-3 rounded-full bg-emerald-500"></span> FINANCEIRO
+                        </h1>
+                    </div>
+                    <div class="mt-1">
+                        <p class="text-xs text-blue-400 font-medium truncate" id="txtPerfilAtivo">Perfil: Carregando...</p>
+                    </div>
+                </div>
+                <nav class="space-y-1">
+                    <a href="#" onclick="mudarAba('dashboard')" id="nav-dashboard" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600/10 text-blue-400 transition">📊 Dashboard</a>
+                    <a href="#" onclick="mudarAba('panorama')" id="nav-panorama" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">📈 Panorama Geral (Anual)</a>
+                    <a href="#" onclick="mudarAba('familiar')" id="nav-familiar" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">🏠 Visão Familiar</a>
+                    <a href="#" onclick="mudarAba('lancamentos')" id="nav-lancamentos" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">📝 Lançamentos</a>
+                    <a href="#" onclick="mudarAba('contas')" id="nav-contas" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">🏦 Contas & Bancos</a>
+                    <a href="#" onclick="mudarAba('orcamentos')" id="nav-orcamentos" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">🎯 Limites de Gastos</a>
+                    <a href="#" onclick="mudarAba('investimentos')" id="nav-investimentos" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">💰 Investimentos</a>
+                </nav>
+            </div>
+            
+            <div class="pt-4 border-t border-borderCol relative">
+                <div id="menuConfigDropdown" class="absolute bottom-16 left-5 right-5 bg-darkBg border border-borderCol rounded-xl p-2 shadow-2xl hidden space-y-1 z-20">
+                    <button onclick="renomearPerfilAtivo(); alternarMenuConfig();" class="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 rounded-lg transition">✏️ Renomear Perfil</button>
+                    <button onclick="limparDadosPerfilAtivo(); alternarMenuConfig();" class="w-full text-left px-3 py-2 text-xs text-amber-400 hover:bg-slate-800 rounded-lg transition">🧹 Limpar Dados do Perfil</button>
+                    <button onclick="apagarPerfilAtivo(); alternarMenuConfig();" class="w-full text-left px-3 py-2 text-xs text-rose-400 hover:bg-slate-800 rounded-lg transition">🗑️ Apagar Perfil Ativo</button>
+                    <button onclick="trocarPerfil(); alternarMenuConfig();" class="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 rounded-lg transition">🚪 Trocar Perfil</button>
+                </div>
+                <button onclick="alternarMenuConfig()" class="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-slate-800/40 hover:bg-slate-800 text-slate-300 transition text-sm font-medium">
+                    <span>⚙️ Configurações</span>
+                    <span class="text-xs text-slate-500">▲</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Conteúdo Principal -->
+        <main class="flex-1 p-4 md:p-8 overflow-y-auto space-y-6">
+
+            <!-- TELA DE SELEÇÃO DE PERFIL INTERNA -->
+            <div id="seletorPerfisInterno" class="fixed inset-0 bg-darkBg/90 z-40 flex items-center justify-center p-4 hidden">
+                <div class="bg-cardBg border border-borderCol w-full max-w-md p-8 rounded-2xl space-y-6 shadow-2xl text-center">
+                    <div>
+                        <h1 class="text-2xl font-bold text-white">Quem está usando?</h1>
+                        <p class="text-sm text-slate-400 mt-1">Selecione o seu perfil para acessar os dados da nuvem.</p>
+                    </div>
+                    <div id="listaBotoesPerfis" class="space-y-3"></div>
+                    <button onclick="adicionarPerfilPrompt()" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl text-sm transition">+ Criar Novo Perfil</button>
+                </div>
+            </div>
+
+            <!-- ABA: DASHBOARD -->
+            <section id="aba-dashboard" class="space-y-6">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div>
+                        <h2 id="tituloDashboard" class="text-2xl font-bold text-white">Visão Geral Pessoal</h2>
+                        <p class="text-sm text-slate-400">Resumo financeiro sincronizado na nuvem.</p>
+                    </div>
+                    <button onclick="abrirModalTransacao()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl text-sm transition shadow-lg shadow-emerald-900/20">+ Adicionar Lançamento</button>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Patrimônio Líquido</p>
+                        <h3 id="dashPatrimonio" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Conta Corrente (Disponível)</p>
+                        <h3 id="dashDisponivel" class="text-2xl font-bold text-blue-400">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Entradas do Mês</p>
+                        <h3 id="dashEntradas" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Despesas do Mês</p>
+                        <h3 id="dashDespesas" class="text-2xl font-bold text-rose-400">R$ 0,00</h3>
+                    </div>
+                </div>
+
+                <div id="cardAlertaGasto" class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-3 hidden">
+                    <div class="flex justify-between items-center">
+                        <h3 class="font-semibold text-base text-white">Status do Limite de Gastos Mensal</h3>
+                        <span id="txtStatusLimitePercentual" class="font-bold text-sm">0%</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                        <div id="barraLimiteGasto" class="bg-emerald-500 h-full w-0 transition-all"></div>
+                    </div>
+                    <p id="txtStatusLimiteDetalhe" class="text-xs text-slate-400"></p>
+                </div>
+
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
+                    <h3 class="font-semibold text-base text-white">Fluxo de Caixa Pessoal (Mês Atual)</h3>
+                    <div class="h-64 relative">
+                        <canvas id="graficoFluxo"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ABA: PANORAMA GERAL -->
+            <section id="aba-panorama" class="space-y-6 hidden">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-white">📈 Panorama Geral Anual</h2>
+                        <p class="text-sm text-slate-400">Acompanhamento mês a mês e consolidação anual.</p>
+                    </div>
+                    <div>
+                        <select id="filtroAnoPanorama" onchange="atualizarPanoramaGeral()" class="bg-darkBg border border-borderCol rounded-lg px-3 py-2 text-sm text-slate-200"></select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Total Entradas no Ano</p>
+                        <h3 id="panoEntradasAno" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Total Despesas no Ano</p>
+                        <h3 id="panoDespesasAno" class="text-2xl font-bold text-rose-400">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Balanço Anual Líquido</p>
+                        <h3 id="panoBalancoAno" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
+                        <h3 class="font-semibold text-base text-white">Evolução Mensal (Entradas vs Despesas)</h3>
+                        <div class="h-72 relative"><canvas id="graficoEvolucaoMensal"></canvas></div>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
+                        <h3 class="font-semibold text-base text-white">Maiores Gastos por Categoria (Anual)</h3>
+                        <div class="h-72 relative flex items-center justify-center"><canvas id="graficoCategoriasAno"></canvas></div>
+                    </div>
+                </div>
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
+                    <h3 class="font-semibold text-base text-white">Detalhamento Mês a Mês</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="text-slate-400 border-b border-borderCol">
+                                    <th class="pb-3">Mês</th>
+                                    <th class="pb-3 text-right">Entradas</th>
+                                    <th class="pb-3 text-right">Despesas</th>
+                                    <th class="pb-3 text-right">Resultado do Mês</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaMesAMes" class="divide-y divide-borderCol"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ABA: VISÃO FAMILIAR -->
+            <section id="aba-familiar" class="space-y-6 hidden">
+                <div>
+                    <h2 class="text-2xl font-bold text-white">🏠 Visão Familiar Consolidada</h2>
+                    <p class="text-sm text-slate-400">Acompanhamento coletivo consolidado da nuvem.</p>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Patrimônio Total da Família</p>
+                        <h3 id="famPatrimonio" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Total de Entradas (Família)</p>
+                        <h3 id="famEntradas" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Total Gasto em Comum (Família)</p>
+                        <h3 id="famDespesas" class="text-2xl font-bold text-rose-400">R$ 0,00</h3>
+                    </div>
+                </div>
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-3">
+                    <h3 class="font-semibold text-base text-white">Contribuição por Membro</h3>
+                    <div id="listaContribuicoesFamiliares" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2"></div>
+                </div>
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
+                    <h3 class="font-semibold text-base text-white">Histórico de Lançamentos Familiares</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="text-slate-400 border-b border-borderCol">
+                                    <th class="pb-3">Escopo</th>
+                                    <th class="pb-3">Pago por</th>
+                                    <th class="pb-3">Data</th>
+                                    <th class="pb-3">Descrição</th>
+                                    <th class="pb-3">Categoria</th>
+                                    <th class="pb-3 text-right">Valor</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaFamiliar" class="divide-y divide-borderCol"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ABA: LANÇAMENTOS -->
+            <section id="aba-lancamentos" class="space-y-6 hidden">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h2 class="text-2xl font-bold text-white">Lançamentos do Perfil</h2>
+                        <p class="text-sm text-slate-400">Gerencie entradas e despesas.</p>
+                    </div>
+                    <button onclick="abrirModalTransacao()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl text-sm transition">+ Novo Lançamento</button>
+                </div>
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="text-slate-400 border-b border-borderCol">
+                                    <th class="pb-3">Escopo</th>
+                                    <th class="pb-3">Data</th>
+                                    <th class="pb-3">Descrição</th>
+                                    <th class="pb-3">Categoria</th>
+                                    <th class="pb-3">Conta</th>
+                                    <th class="pb-3 text-right">Valor</th>
+                                    <th class="pb-3 text-center">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaTransacoesCompleta" class="divide-y divide-borderCol"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ABA: CONTAS -->
+            <section id="aba-contas" class="space-y-6 hidden">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h2 class="text-2xl font-bold text-white">Contas & Caixinhas do Perfil</h2>
+                        <p class="text-sm text-slate-400">Contas correntes e reservas.</p>
+                    </div>
+                    <button onclick="abrirModalConta()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl text-sm transition shadow-lg">+ Nova Conta</button>
+                </div>
+                <div id="gridContas" class="grid grid-cols-1 md:grid-cols-3 gap-4"></div>
+            </section>
+
+            <!-- ABA: LIMITES DE GASTOS -->
+            <section id="aba-orcamentos" class="space-y-6 hidden">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h2 class="text-2xl font-bold text-white">Limite de Gastos Mensais</h2>
+                        <p class="text-sm text-slate-400">Defina o teto de gastos.</p>
+                    </div>
+                    <button onclick="definirLimiteMensalPrompt()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl text-sm transition">⚙️ Editar Teto</button>
+                </div>
+                <div class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-300 font-medium">Teto Configurado:</span>
+                        <strong id="txtTetoConfigurado" class="text-white text-lg">R$ 0,00</strong>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-300 font-medium">Total Gasto no Mês:</span>
+                        <strong id="txtTotalGastoMes" class="text-rose-400 text-lg">R$ 0,00</strong>
+                    </div>
+                    <div class="flex justify-between items-center border-t border-borderCol pt-3">
+                        <span class="text-slate-300 font-medium">Disponível para Gastar:</span>
+                        <strong id="txtDisponivelGastar" class="text-emerald-400 text-xl">R$ 0,00</strong>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ABA: INVESTIMENTOS -->
+            <section id="aba-investimentos" class="space-y-6 hidden">
+                <div>
+                    <h2 class="text-2xl font-bold text-white">💰 Investimentos & Caixinhas</h2>
+                    <p class="text-sm text-slate-400">Visão consolidada de aplicações.</p>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Total em Investimentos</p>
+                        <h3 id="invTotal" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                    </div>
+                </div>
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="text-slate-400 border-b border-borderCol">
+                                    <th class="pb-3">Caixinha / Investimento</th>
+                                    <th class="pb-3 text-right">Valor Aplicado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaInvestimentos" class="divide-y divide-borderCol"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- MODAL LANÇAMENTO -->
+    <div id="modalTransacao" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-cardBg border border-borderCol w-full max-w-md p-6 rounded-2xl space-y-4 shadow-2xl">
+            <div class="flex justify-between items-center border-b border-borderCol pb-3">
+                <h3 id="modalTitulo" class="font-bold text-lg text-white">Novo Lançamento</h3>
+                <button onclick="fecharModalTransacao()" class="text-slate-400 hover:text-white text-lg">&times;</button>
+            </div>
+            <form id="formModalTransacao" onsubmit="salvarTransacaoModal(event)" class="space-y-3">
+                <input type="hidden" id="modalEditId">
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="text-xs text-slate-400">Tipo</label>
+                        <select id="modalTipo" class="w-full mt-1 bg-darkBg border border-borderCol rounded-lg p-2.5 text-sm text-slate-200">
+                            <option value="INCOME">Entrada</option>
+                            <option value="EXPENSE">Despesa</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-xs text-slate-400">Escopo</label>
+                        <select id="modalEscopo" class="w-full mt-1 bg-darkBg border border-borderCol rounded-lg p-2.5 text-sm text-slate-200">
+                            <option value="pessoal">Pessoal</option>
+                            <option value="familiar">Familiar</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-slate-400">Data</label>
+                    <input type="date" id="modalData" required class="w-full mt-1 bg-darkBg border border-borderCol rounded-lg p-2.5 text-sm text-slate-200">
+                </div>
+                <div>
+                    <label class="text-xs text-slate-400">Descrição</label>
+                    <input type="text" id="modalDescricao" required placeholder="Ex: Supermercado..." class="w-full mt-1 bg-darkBg border border-borderCol rounded-lg p-2.5 text-sm text-slate-200">
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="text-xs text-slate-400">Valor (R$)</label>
+                        <input type="number" step="0.01" id="modalValor" required placeholder="0.00" class="w-full mt-1 bg-darkBg border border-borderCol rounded-lg p-2.5 text-sm text-slate-200">
+                    </div>
+                    <div>
+                        <label class="text-xs text-slate-400">Categoria</label>
+                        <input type="text" id="modalCategoria" placeholder="Ex: Alimentação" class="w-full mt-1 bg-darkBg border border-borderCol rounded-lg p-2.5 text-sm text-slate-200">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-slate-400">Conta de Origem</label>
+                    <select id="modalConta" class="w-full mt-1 bg-darkBg border border-borderCol rounded-lg p-2.5 text-sm text-slate-200"></select>
+                </div>
+                <div class="pt-3 flex gap-2">
+                    <button type="button" onclick="fecharModalTransacao()" class="w-1/2 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl text-sm transition">Cancelar</button>
+                    <button type="submit" class="w-1/2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl text-sm transition">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL CONTA -->
+    <div id="modalFormConta" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-cardBg border border-borderCol w-full max-w-md p-6 rounded-2xl space-y-4 shadow-2xl">
+            <div class="flex justify-between items-center border-b border-borderCol pb-3">
+                <h3 id="modalContaTitulo" class="font-bold text-lg text-white">Nova Conta ou Caixinha</h3>
+                <button onclick="fecharModalConta()" class="text-slate-400 hover:text-white text-lg">&times;</button>
+            </div>
+            <form id="formModalConta" onsubmit="salvarContaModal(event)" class="space-y-3">
+                <input type="hidden" id="modalContaEditId">
+                <div>
+                    <label class="text-xs text-slate-400">Nome</label>
+                    <input type="text" id="modalContaNome" required placeholder="Ex: Nubank..." class="w-full mt-1 bg-darkBg border border-borderCol rounded-lg p-2.5 text-sm text-slate-200">
+                </div>
+                <div>
+                    <label class="text-xs text-slate-400">Tipo</label>
+                    <select id="modalContaTipo" class="w-full mt-1 bg-darkBg border border-borderCol rounded-lg p-2.5 text-sm text-slate-200">
+                        <option value="corrente">Conta Corrente</option>
+                        <option value="investimento">Investimento / Caixinha</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs text-slate-400">Saldo Atual (R$)</label>
+                    <input type="number" step="0.01" id="modalContaValor" required placeholder="0.00" class="w-full mt-1 bg-darkBg border border-borderCol rounded-lg p-2.5 text-sm text-slate-200">
+                </div>
+                <div class="pt-3 flex gap-2">
+                    <button type="button" onclick="fecharModalConta()" class="w-1/2 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl text-sm transition">Cancelar</button>
+                    <button type="submit" class="w-1/2 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl text-sm transition">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SCRIPTS DA APLICAÇÃO CLOUD -->
+    <script>
+        let db = {
+            perfilAtivoId: null,
+            perfis: [
+                {
+                    id: 'perfil_1',
+                    nome: 'Meu Perfil',
+                    tetoMensal: 3000,
+                    transacoes: [],
+                    contas: [{ id: 'c1', nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }]
+                }
+            ]
+        };
+
+        let chartFluxoInstance = null;
+        let chartEvolucaoInstance = null;
+        let chartCategoriasInstance = null;
+
+        async function iniciarSistemaCloud() {
+            try {
+                const docRef = window.cloudDb.doc(window.cloudDb.dbCloud, "sistema", "dadosFinanceiros");
+                const docSnap = await window.cloudDb.getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    db = docSnap.data();
+                } else {
+                    await salvarEstadoGeral();
+                }
+            } catch (e) {
+                console.error("Erro ao carregar do Firebase:", e);
+            }
+            verificarEstadoApp();
+        }
+
+        async function salvarEstadoGeral() {
+            try {
+                const docRef = window.cloudDb.doc(window.cloudDb.dbCloud, "sistema", "dadosFinanceiros");
+                await window.cloudDb.setDoc(docRef, db);
+            } catch (e) {
+                console.error("Erro ao salvar no Firebase:", e);
+                alert("Erro ao sincronizar com a nuvem. Verifique a conexão.");
+            }
+            verificarEstadoApp();
+        }
+
+        function verificarEstadoApp() {
+            const telaPerfis = document.getElementById('telaPerfis');
+            const appPrincipal = document.getElementById('appPrincipal');
+            const seletorPerfisInterno = document.getElementById('seletorPerfisInterno');
+
+            if (!db.perfilAtivoId) {
+                telaPerfis.classList.remove('hidden');
+                appPrincipal.classList.add('hidden');
+                seletorPerfisInterno.classList.remove('hidden');
+                renderizarSeletorPerfis();
+            } else {
+                telaPerfis.classList.add('hidden');
+                appPrincipal.classList.remove('hidden');
+                seletorPerfisInterno.classList.add('hidden');
+                atualizarInterfacePerfilAtivo();
+            }
+        }
+
+        function renderizarSeletorPerfis() {
+            const container = document.getElementById('listaBotoesPerfis');
+            container.innerHTML = '';
+            db.perfis.forEach(p => {
+                container.innerHTML += `
+                    <div class="flex gap-2">
+                        <button onclick="selecionarPerfil('${p.id}')" class="flex-1 py-3 px-4 bg-slate-800 hover:bg-blue-600 text-white font-semibold rounded-xl transition flex justify-between items-center text-left">
+                            <span>👤 ${p.nome}</span>
+                            <span class="text-xs text-slate-400">Acessar &rarr;</span>
+                        </button>
+                        ${db.perfis.length > 1 ? `<button onclick="apagarPerfilPorId('${p.id}')" title="Excluir" class="px-3 bg-slate-800 hover:bg-rose-600/80 text-rose-300 rounded-xl transition">🗑️</button>` : ''}
+                    </div>
+                `;
+            });
+        }
+
+        function selecionarPerfil(id) {
+            db.perfilAtivoId = id;
+            salvarEstadoGeral();
+        }
+
+        function trocarPerfil() {
+            db.perfilAtivoId = null;
+            verificarEstadoApp();
+        }
+
+        function adicionarPerfilPrompt() {
+            const nome = prompt("Nome do novo perfil:");
+            if (nome && nome.trim()) {
+                const novoId = 'perfil_' + Date.now();
+                db.perfis.push({
+                    id: novoId,
+                    nome: nome.trim(),
+                    tetoMensal: 3000,
+                    transacoes: [],
+                    contas: [{ id: 'c_' + Date.now(), nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }]
+                });
+                db.perfilAtivoId = novoId;
+                salvarEstadoGeral();
+            }
+        }
+
+        function apagarPerfilPorId(id) {
+            if (confirm("Deseja realmente excluir este perfil e todos os seus dados?")) {
+                db.perfis = db.perfis.filter(p => p.id !== id);
+                if (db.perfilAtivoId === id) {
+                    db.perfilAtivoId = db.perfis.length > 0 ? db.perfis[0].id : null;
+                }
+                salvarEstadoGeral();
+            }
+        }
+
+        function apagarPerfilAtivo() {
+            if (db.perfilAtivoId) apagarPerfilPorId(db.perfilAtivoId);
+        }
+
+        function renomearPerfilAtivo() {
+            const perfil = obterPerfilAtivo();
+            if (perfil) {
+                const novoNome = prompt("Novo nome para o perfil:", perfil.nome);
+                if (novoNome && novoNome.trim()) {
+                    perfil.nome = novoNome.trim();
+                    salvarEstadoGeral();
+                }
+            }
+        }
+
+        function limparDadosPerfilAtivo() {
+            const perfil = obterPerfilAtivo();
+            if (perfil && confirm("Deseja apagar transações e resetar as contas deste perfil?")) {
+                perfil.transacoes = [];
+                perfil.contas = [{ id: 'c_' + Date.now(), nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }];
+                salvarEstadoGeral();
+            }
+        }
+
+        function alternarMenuConfig() {
+            document.getElementById('menuConfigDropdown').classList.toggle('hidden');
+        }
+
+        function obterPerfilAtivo() {
+            return db.perfis.find(p => p.id === db.perfilAtivoId) || db.perfis[0];
+        }
+
+        function mudarAba(abaId) {
+            ['dashboard', 'panorama', 'familiar', 'lancamentos', 'contas', 'orcamentos', 'investimentos'].forEach(a => {
+                const sec = document.getElementById(`aba-${a}`);
+                const nav = document.getElementById(`nav-${a}`);
+                if (a === abaId) {
+                    sec.classList.remove('hidden');
+                    nav.className = "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600/10 text-blue-400 transition";
+                } else {
+                    sec.classList.add('hidden');
+                    nav.className = "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition";
+                }
+            });
+            if (abaId === 'panorama') atualizarPanoramaGeral();
+        }
+
+        function atualizarInterfacePerfilAtivo() {
+            const perfil = obterPerfilAtivo();
+            document.getElementById('txtPerfilAtivo').innerText = `Perfil: ${perfil.nome}`;
+            document.getElementById('tituloDashboard').innerText = `Visão Geral Pessoal (${perfil.nome})`;
+            renderizarContas();
+            renderizarTransacoes();
+            renderizarVisaoFamiliar();
+            renderizarInvestimentos();
+            atualizarDashboard();
+        }
+
+        function abrirModalConta(id = null) {
+            document.getElementById('modalContaEditId').value = '';
+            document.getElementById('formModalConta').reset();
+            document.getElementById('modalContaTitulo').innerText = 'Nova Conta ou Caixinha';
+            if (id) {
+                const perfil = obterPerfilAtivo();
+                const conta = perfil.contas.find(c => c.id === id);
+                if (conta) {
+                    document.getElementById('modalContaEditId').value = conta.id;
+                    document.getElementById('modalContaNome').value = conta.nome;
+                    document.getElementById('modalContaTipo').value = conta.tipo;
+                    document.getElementById('modalContaValor').value = conta.saldo;
+                    document.getElementById('modalContaTitulo').innerText = 'Editar Conta ou Caixinha';
+                }
+            }
+            document.getElementById('modalFormConta').classList.remove('hidden');
+        }
+
+        function fecharModalConta() { document.getElementById('modalFormConta').classList.add('hidden'); }
+
+        function salvarContaModal(event) {
+            event.preventDefault();
+            const perfil = obterPerfilAtivo();
+            const editId = document.getElementById('modalContaEditId').value;
+            const nome = document.getElementById('modalContaNome').value.trim();
+            const tipo = document.getElementById('modalContaTipo').value;
+            const saldo = parseFloat(document.getElementById('modalContaValor').value) || 0;
+
+            if (editId) {
+                const conta = perfil.contas.find(c => c.id === editId);
+                if (conta) { conta.nome = nome; conta.tipo = tipo; conta.saldo = saldo; }
+            } else {
+                perfil.contas.push({ id: 'c_' + Date.now(), nome, tipo, saldo });
+            }
+            fecharModalConta();
+            salvarEstadoGeral();
+        }
+
+        function apagarConta(id) {
+            const perfil = obterPerfilAtivo();
+            if (perfil.contas.length <= 1) { alert("Mantenha ao menos uma conta."); return; }
+            if (confirm("Deseja apagar esta conta?")) {
+                perfil.contas = perfil.contas.filter(c => c.id !== id);
+                salvarEstadoGeral();
+            }
+        }
+
+        function renderizarContas() {
+            const perfil = obterPerfilAtivo();
+            const grid = document.getElementById('gridContas');
+            grid.innerHTML = '';
+            perfil.contas.forEach(c => {
+                grid.innerHTML += `
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-3">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <span class="text-xs px-2 py-0.5 rounded font-medium ${c.tipo === 'corrente' ? 'bg-blue-500/10 text-blue-400' : 'bg-emerald-500/10 text-emerald-400'}">${c.tipo === 'corrente' ? 'Conta Corrente' : 'Investimento'}</span>
+                                <h3 class="font-bold text-white text-lg mt-1">${c.nome}</h3>
+                            </div>
+                            <div class="flex gap-1">
+                                <button onclick="abrirModalConta('${c.id}')" class="p-1 text-slate-400 hover:text-white">✏️</button>
+                                <button onclick="apagarConta('${c.id}')" class="p-1 text-slate-400 hover:text-rose-400">🗑️</button>
+                            </div>
+                        </div>
+                        <div>
+                            <p class="text-xs text-slate-400">Saldo Atual</p>
+                            <h4 class="text-2xl font-bold text-white">R$ ${c.saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h4>
+                        </div>
+                    </div>
+                `;
+            });
+            atualizarSelectContasModal();
+        }
+
+        function atualizarSelectContasModal() {
+            const perfil = obterPerfilAtivo();
+            const select = document.getElementById('modalConta');
+            select.innerHTML = '';
+            perfil.contas.forEach(c => {
+                select.innerHTML += `<option value="${c.id}">${c.nome} (${c.tipo === 'corrente' ? 'Corrente' : 'Investimento'})</option>`;
+            });
+        }
+
+        function abrirModalTransacao(id = null) {
+            document.getElementById('modalEditId').value = '';
+            document.getElementById('formModalTransacao').reset();
+            document.getElementById('modalTitulo').innerText = 'Novo Lançamento';
+            document.getElementById('modalData').value = new Date().toISOString().split('T')[0];
+            atualizarSelectContasModal();
+
+            if (id) {
+                const perfil = obterPerfilAtivo();
+                const t = perfil.transacoes.find(tr => tr.id === id);
+                if (t) {
+                    document.getElementById('modalEditId').value = t.id;
+                    document.getElementById('modalTipo').value = t.tipo;
+                    document.getElementById('modalEscopo').value = t.escopo;
+                    document.getElementById('modalData').value = t.data;
+                    document.getElementById('modalDescricao').value = t.descricao;
+                    document.getElementById('modalValor').value = t.valor;
+                    document.getElementById('modalCategoria').value = t.categoria || '';
+                    document.getElementById('modalConta').value = t.contaId;
+                    document.getElementById('modalTitulo').innerText = 'Editar Lançamento';
+                }
+            }
+            document.getElementById('modalTransacao').classList.remove('hidden');
+        }
+
+        function fecharModalTransacao() { document.getElementById('modalTransacao').classList.add('hidden'); }
+
+        function salvarTransacaoModal(event) {
+            event.preventDefault();
+            const perfil = obterPerfilAtivo();
+            const editId = document.getElementById('modalEditId').value;
+            const tipo = document.getElementById('modalTipo').value;
+            const escopo = document.getElementById('modalEscopo').value;
+            const data = document.getElementById('modalData').value;
+            const descricao = document.getElementById('modalDescricao').value.trim();
+            const valor = parseFloat(document.getElementById('modalValor').value) || 0;
+            const categoria = document.getElementById('modalCategoria').value.trim() || 'Geral';
+            const contaId = document.getElementById('modalConta').value;
+
+            if (editId) {
+                const index = perfil.transacoes.findIndex(tr => tr.id === editId);
+                if (index !== -1) perfil.transacoes[index] = { id: editId, tipo, escopo, data, descricao, valor, categoria, contaId };
+            } else {
+                perfil.transacoes.push({ id: 't_' + Date.now(), tipo, escopo, data, descricao, valor, categoria, contaId });
+            }
+            fecharModalTransacao();
+            salvarEstadoGeral();
+        }
+
+        function apagarTransacao(id) {
+            const perfil = obterPerfilAtivo();
+            if (confirm("Deseja apagar este lançamento?")) {
+                perfil.transacoes = perfil.transacoes.filter(t => t.id !== id);
+                salvarEstadoGeral();
+            }
+        }
+
+        function renderizarTransacoes() {
+            const perfil = obterPerfilAtivo();
+            const tbody = document.getElementById('tabelaTransacoesCompleta');
+            tbody.innerHTML = '';
+            perfil.transacoes.sort((a, b) => new Date(b.data) - new Date(a.data)).forEach(t => {
+                const conta = perfil.contas.find(c => c.id === t.contaId);
+                const nomeConta = conta ? conta.nome : 'Removida';
+                tbody.innerHTML += `
+                    <tr class="border-b border-borderCol hover:bg-slate-800/30">
+                        <td class="py-3"><span class="px-2 py-0.5 rounded text-xs ${t.escopo === 'familiar' ? 'bg-purple-500/10 text-purple-400' : 'bg-slate-800 text-slate-300'}">${t.escopo}</span></td>
+                        <td class="py-3 text-slate-300">${t.data.split('-').reverse().join('/')}</td>
+                        <td class="py-3 text-white font-medium">${t.descricao}</td>
+                        <td class="py-3 text-slate-300">${t.categoria}</td>
+                        <td class="py-3 text-slate-300">${nomeConta}</td>
+                        <td class="py-3 text-right font-semibold ${t.tipo === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}">${t.tipo === 'INCOME' ? '+' : '-'} R$ ${t.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        <td class="py-3 text-center">
+                            <button onclick="abrirModalTransacao('${t.id}')" class="text-slate-400 hover:text-white mr-2">✏️</button>
+                            <button onclick="apagarTransacao('${t.id}')" class="text-slate-400 hover:text-rose-400">🗑️</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        function atualizarDashboard() {
+            const perfil = obterPerfilAtivo();
+            const mesAtual = new Date().toISOString().slice(0, 7);
+            let totalPatrimonio = 0, disponivelCorrente = 0;
+            perfil.contas.forEach(c => {
+                totalPatrimonio += c.saldo;
+                if (c.tipo === 'corrente') disponivelCorrente += c.saldo;
+            });
+
+            let entradasMes = 0, despesasMes = 0;
+            perfil.transacoes.forEach(t => {
+                if (t.data.startsWith(mesAtual)) {
+                    if (t.tipo === 'INCOME') entradasMes += t.valor;
+                    if (t.tipo === 'EXPENSE') despesasMes += t.valor;
+                }
+            });
+
+            document.getElementById('dashPatrimonio').innerText = `R$ ${totalPatrimonio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('dashDisponivel').innerText = `R$ ${disponivelCorrente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('dashEntradas').innerText = `R$ ${entradasMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('dashDespesas').innerText = `R$ ${despesasMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+
+            const teto = perfil.tetoMensal || 3000;
+            const percentual = Math.min(Math.round((despesasMes / teto) * 100), 100);
+            document.getElementById('txtTetoConfigurado').innerText = `R$ ${teto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('txtTotalGastoMes').innerText = `R$ ${despesasMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('txtDisponivelGastar').innerText = `R$ ${Math.max(teto - despesasMes, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            
+            const cardAlerta = document.getElementById('cardAlertaGasto');
+            cardAlerta.classList.remove('hidden');
+            document.getElementById('txtStatusLimitePercentual').innerText = `${percentual}%`;
+            document.getElementById('barraLimiteGasto').style.width = `${percentual}%`;
+            document.getElementById('txtStatusLimiteDetalhe').innerText = `Você gastou R$ ${despesasMes.toFixed(2)} de um teto de R$ ${teto.toFixed(2)}.`;
+
+            renderizarGraficoFluxo(entradasMes, despesasMes);
+        }
+
+        function renderizarGraficoFluxo(entradas, despesas) {
+            const ctx = document.getElementById('graficoFluxo').getContext('2d');
+            if (chartFluxoInstance) chartFluxoInstance.destroy();
+            chartFluxoInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Entradas', 'Despesas'],
+                    datasets: [{ data: [entradas, despesas], backgroundColor: ['#10b981', '#f43f5e'], borderRadius: 8 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#1e293b' } }, x: { grid: { display: false } } } }
+            });
+        }
+
+        function definirLimiteMensalPrompt() {
+            const perfil = obterPerfilAtivo();
+            const novo = prompt("Novo teto de gastos mensal:", perfil.tetoMensal || 3000);
+            if (novo !== null && !isNaN(parseFloat(novo))) {
+                perfil.tetoMensal = parseFloat(novo);
+                salvarEstadoGeral();
+            }
+        }
+
+        function renderizarVisaoFamiliar() {
+            const tbody = document.getElementById('tabelaFamiliar');
+            tbody.innerHTML = '';
+            let famPat = 0, famEnt = 0, famDes = 0;
+            const contribuicoes = {};
+
+            db.perfis.forEach(p => {
+                p.contas.forEach(c => famPat += c.saldo);
+                p.transacoes.forEach(t => {
+                    if (t.escopo === 'familiar') {
+                        if (t.tipo === 'INCOME') famEnt += t.valor;
+                        if (t.tipo === 'EXPENSE') {
+                            famDes += t.valor;
+                            contribuicoes[p.nome] = (contribuicoes[p.nome] || 0) + t.valor;
+                        }
+                        tbody.innerHTML += `
+                            <tr class="border-b border-borderCol">
+                                <td class="py-3"><span class="px-2 py-0.5 rounded text-xs bg-purple-500/10 text-purple-400">familiar</span></td>
+                                <td class="py-3 text-white font-medium">${p.nome}</td>
+                                <td class="py-3 text-slate-300">${t.data.split('-').reverse().join('/')}</td>
+                                <td class="py-3 text-slate-300">${t.descricao}</td>
+                                <td class="py-3 text-slate-300">${t.categoria}</td>
+                                <td class="py-3 text-right text-rose-400 font-semibold">- R$ ${t.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                            </tr>
+                        `;
+                    }
+                });
+            });
+
+            document.getElementById('famPatrimonio').innerText = `R$ ${famPat.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('famEntradas').innerText = `R$ ${famEnt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('famDespesas').innerText = `R$ ${famDes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+
+            const divCont = document.getElementById('listaContribuicoesFamiliares');
+            divCont.innerHTML = '';
+            for (const [membro, total] of Object.entries(contribuicoes)) {
+                divCont.innerHTML += `
+                    <div class="bg-darkBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Pago por ${membro}</p>
+                        <h4 class="text-xl font-bold text-white mt-1">R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h4>
+                    </div>
+                `;
+            }
+        }
+
+        function renderizarInvestimentos() {
+            const perfil = obterPerfilAtivo();
+            const tbody = document.getElementById('tabelaInvestimentos');
+            tbody.innerHTML = '';
+            let totalInv = 0;
+            perfil.contas.filter(c => c.tipo === 'investimento').forEach(c => {
+                totalInv += c.saldo;
+                tbody.innerHTML += `
+                    <tr class="border-b border-borderCol">
+                        <td class="py-3 text-white font-medium">${c.nome}</td>
+                        <td class="py-3 text-right text-emerald-400 font-semibold">R$ ${c.saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                `;
+            });
+            document.getElementById('invTotal').innerText = `R$ ${totalInv.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+        }
+
+        function atualizarPanoramaGeral() {
+            const perfil = obterPerfilAtivo();
+            const selectAno = document.getElementById('filtroAnoPanorama');
+            const anosDisponiveis = [...new Set(perfil.transacoes.map(t => t.data.slice(0, 4)))];
+            const anoAtualStr = new Date().getFullYear().toString();
+            if (!anosDisponiveis.includes(anoAtualStr)) anosDisponiveis.push(anoAtualStr);
+            anosDisponiveis.sort().reverse();
+
+            const anoSelecionado = selectAno.value && anosDisponiveis.includes(selectAno.value) ? selectAno.value : anosDisponiveis[0];
+            selectAno.innerHTML = '';
+            anosDisponiveis.forEach(ano => {
+                selectAno.innerHTML += `<option value="${ano}" ${ano === anoSelecionado ? 'selected' : ''}>${ano}</option>`;
+            });
+
+            const mesesNomes = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+            const dadosMensaisEntradas = new Array(12).fill(0);
+            const dadosMensaisDespesas = new Array(12).fill(0);
+            const categoriasAno = {};
+            let totalEntradasAno = 0, totalDespesasAno = 0;
+
+            perfil.transacoes.forEach(t => {
+                if (t.data.startsWith(anoSelecionado)) {
+                    const mesIndex = parseInt(t.data.slice(5, 7), 10) - 1;
+                    if (mesIndex >= 0 && mesIndex < 12) {
+                        if (t.tipo === 'INCOME') { dadosMensaisEntradas[mesIndex] += t.valor; totalEntradasAno += t.valor; }
+                        else if (t.tipo === 'EXPENSE') {
+                            dadosMensaisDespesas[mesIndex] += t.valor; totalDespesasAno += t.valor;
+                            const cat = t.categoria || 'Geral';
+                            categoriasAno[cat] = (categoriasAno[cat] || 0) + t.valor;
+                        }
+                    }
+                }
+            });
+
+            document.getElementById('panoEntradasAno').innerText = `R$ ${totalEntradasAno.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('panoDespesasAno').innerText = `R$ ${totalDespesasAno.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            const balancoAno = totalEntradasAno - totalDespesasAno;
+            const elBalanco = document.getElementById('panoBalancoAno');
+            elBalanco.innerText = `R$ ${balancoAno.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            elBalanco.className = `text-2xl font-bold ${balancoAno >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+
+            const tbodyMeses = document.getElementById('tabelaMesAMes');
+            tbodyMeses.innerHTML = '';
+            for (let i = 0; i < 12; i++) {
+                const ent = dadosMensaisEntradas[i], des = dadosMensaisDespesas[i], res = ent - des;
+                if (ent > 0 || des > 0) {
+                    tbodyMeses.innerHTML += `
+                        <tr class="border-b border-borderCol hover:bg-slate-800/30">
+                            <td class="py-3 font-medium text-white">${mesesNomes[i]}</td>
+                            <td class="py-3 text-right text-emerald-400">+ R$ ${ent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                            <td class="py-3 text-right text-rose-400">- R$ ${des.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                            <td class="py-3 text-right font-semibold ${res >= 0 ? 'text-emerald-400' : 'text-rose-400'}">R$ ${res.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                    `;
+                }
+            }
+            if (tbodyMeses.innerHTML === '') {
+                tbodyMeses.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-slate-500">Nenhum lançamento no ano ${anoSelecionado}.</td></tr>`;
+            }
+
+            renderizarGraficoEvolucaoMensal(mesesNomes, dadosMensaisEntradas, dadosMensaisDespesas);
+            renderizarGraficoCategoriasAno(categoriasAno);
+        }
+
+        function renderizarGraficoEvolucaoMensal(labels, entradas, despesas) {
+            const ctx = document.getElementById('graficoEvolucaoMensal').getContext('2d');
+            if (chartEvolucaoInstance) chartEvolucaoInstance.destroy();
+            chartEvolucaoInstance = new Chart(ctx, {
+                type: 'bar',
+                data: { labels, datasets: [{ label: 'Entradas', data: entradas, backgroundColor: '#10b981', borderRadius: 4 }, { label: 'Despesas', data: despesas, backgroundColor: '#f43f5e', borderRadius: 4 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#94a3b8' } } }, scales: { y: { grid: { color: '#1e293b' } }, x: { grid: { display: false } } } }
+            });
+        }
+
+        function renderizarGraficoCategoriasAno(catObj) {
+            const ctx = document.getElementById('graficoCategoriasAno').getContext('2d');
+            if (chartCategoriasInstance) chartCategoriasInstance.destroy();
+            const sortedCat = Object.entries(catObj).sort((a, b) => b[1] - a[1]).slice(0, 5);
+            const labels = sortedCat.map(i => i[0]), data = sortedCat.map(i => i[1]);
+            if (data.length === 0) { labels.push('Sem gastos'); data.push(1); }
+            chartCategoriasInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: { labels, datasets: [{ data, backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6', '#64748b'] }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12 } } } }
+            });
+        }
+    </script>
+</body>
+</html>
