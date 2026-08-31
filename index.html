@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema Financeiro Pessoal & Familiar (Firebase)</title>
-    <!-- Tailwind CSS CDN -->
+    <title>Gestão Financeira Pessoal e Familiar</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -20,198 +20,117 @@
             }
         }
     </script>
-    <!-- Chart.js CDN -->
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-    <!-- Firebase SDKs (Modular v10) -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
-        // 🔥 COLE AS SUAS CREDENCIAIS DO FIREBASE AQUI:
-        const firebaseConfig = {
-            apiKey: "SUA_API_KEY",
-            authDomain: "SEU_PROJETO.firebaseapp.com",
-            projectId: "SEU_PROJETO_ID",
-            storageBucket: "SEU_PROJETO.appspot.com",
-            messagingSenderId: "SEU_SENDER_ID",
-            appId: "SEU_APP_ID"
-        };
-
-        // Inicializar Firebase
-        const app = initializeApp(firebaseConfig);
-        const dbFirestore = getFirestore(app);
-
-        // Estrutura padrão inicial
-        let db = {
-            perfilAtivoId: null,
-            perfis: [
-                {
-                    id: 'perfil_padrao',
-                    nome: 'Pessoal',
-                    tetoMensal: 3000,
-                    transacoes: [],
-                    contas: [
-                        { id: 'c_1', nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }
-                    ]
-                }
-            ]
-        };
-
-        let chartFluxoInstance = null;
-        let chartEvolucaoInstance = null;
-        let chartCategoriasInstance = null;
-
-        // Função global para salvar no Firestore (Nuvem) e atualizar interface
-        window.salvarEstadoGeral = async function() {
-            try {
-                // Salva no Firestore na coleção 'sistema', documento 'dados_financeiros'
-                await setDoc(doc(dbFirestore, "sistema", "dados_financeiros"), db);
-            } catch (e) {
-                console.error("Erro ao salvar no Firebase: ", e);
-            }
-            window.verificarEstadoApp();
-        };
-
-        // Carrega dados do Firestore ao iniciar
-        async function carregarDadosNu始めた() {
-            try {
-                const docRef = doc(dbFirestore, "sistema", "dados_financeiros");
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    db = docSnap.data();
-                } else {
-                    // Se não existir, salva o padrão inicial no Firestore
-                    await setDoc(docRef, db);
-                }
-            } catch (e) {
-                console.error("Erro ao carregar do Firebase, usando cache local:", e);
-            }
-            window.verificarEstadoApp();
-        }
-
-        // Executa o carregamento inicial assim que a página abre
-        window.addEventListener('DOMContentLoaded', () => {
-            carregarDadosNu始めた();
-        });
-    </script>
 </head>
-<body class="bg-darkBg text-slate-100 font-sans antialiased min-h-screen flex flex-col">
+<body class="bg-darkBg text-slate-100 min-h-screen flex flex-col">
 
-    <!-- TELA DE SELEÇÃO / CRIAÇÃO DE PERFIL (Inicial) -->
+    <!-- TELA DE SELEÇÃO DE PERFIL -->
     <div id="telaSelecaoPerfil" class="fixed inset-0 z-50 bg-darkBg flex items-center justify-center p-4">
-        <div class="bg-cardBg border border-borderCol rounded-2xl p-8 max-w-md w-full shadow-2xl space-y-6">
+        <div class="bg-cardBg border border-borderCol rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-6">
             <div class="text-center space-y-2">
-                <h1 class="text-2xl font-bold text-white">Bem-vindo ao Sistema Financeiro</h1>
-                <p class="text-sm text-slate-400">Selecione um perfil ou crie um novo para acessar seus dados na nuvem.</p>
+                <h2 class="text-2xl font-bold text-white">Quem está usando?</h2>
+                <p class="text-xs text-slate-400">Selecione um perfil ou crie um novo para acessar suas finanças sincronizadas.</p>
             </div>
             
-            <div id="listaPerfisSelecao" class="space-y-3 max-h-60 overflow-y-auto pr-1">
-                <!-- Injetado via JS -->
+            <div id="listaPerfisSelecao" class="space-y-3 max-h-60 overflow-y-auto">
+                <!-- Preenchido via JS -->
             </div>
 
-            <div class="pt-4 border-t border-borderCol flex gap-3">
-                <button onclick="adicionarPerfilPrompt()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2">
-                    <span>➕ Novo Perfil</span>
-                </button>
-            </div>
+            <button onclick="adicionarPerfilPrompt()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 rounded-xl text-sm transition">
+                + Criar Novo Perfil
+            </button>
         </div>
     </div>
 
     <!-- APLICAÇÃO PRINCIPAL -->
     <div id="appPrincipal" class="hidden flex-1 flex flex-col md:flex-row">
-        <!-- Sidebar de Navegação -->
-        <aside class="w-full md:w-64 bg-cardBg border-r border-borderCol flex flex-col justify-between p-4">
+        
+        <!-- SIDEBAR DE NAVEGAÇÃO -->
+        <aside class="w-full md:w-64 bg-cardBg border-r border-borderCol p-4 flex flex-col justify-between">
             <div class="space-y-6">
-                <!-- Info do Perfil Ativo -->
                 <div class="flex items-center justify-between border-b border-borderCol pb-4">
-                    <div>
-                        <span class="text-xs text-slate-400">Conta Ativa</span>
-                        <h2 id="txtPerfilAtivo" class="font-bold text-white text-base">Perfil: -</h2>
-                    </div>
-                    <button onclick="trocarPerfil()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1.5 rounded-lg transition" title="Trocar de Perfil">Trocar</button>
+                    <span id="txtPerfilAtivo" class="font-bold text-white text-sm truncate">Perfil: Carregando...</span>
+                    <button onclick="trocarPerfil()" class="text-xs text-blue-400 hover:underline">Trocar</button>
                 </div>
 
-                <!-- Links de Navegação -->
                 <nav class="space-y-1">
-                    <button onclick="mudarAba('dashboard')" id="nav-dashboard" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600/10 text-blue-400 transition">📊 Dashboard</button>
+                    <button onclick="mudarAba('dashboard')" id="nav-dashboard" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600/10 text-blue-400 transition">📊 Visão Geral</button>
                     <button onclick="mudarAba('panorama')" id="nav-panorama" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">📈 Panorama Anual</button>
                     <button onclick="mudarAba('familiar')" id="nav-familiar" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">🏠 Visão Familiar</button>
-                    <button onclick="mudarAba('lancamentos')" id="nav-lancamentos" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">💸 Lançamentos</button>
-                    <button onclick="mudarAba('contas')" id="nav-contas" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">🏦 Contas & Caixinhas</button>
+                    <button onclick="mudarAba('lancamentos')" id="nav-lancamentos" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">📑 Lançamentos</button>
+                    <button onclick="mudarAba('contas')" id="nav-contas" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">💳 Contas & Caixinhas</button>
                     <button onclick="mudarAba('orcamentos')" id="nav-orcamentos" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">🎯 Orçamentos</button>
-                    <button onclick="mudarAba('investimentos')" id="nav-investimentos" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">💎 Investimentos</button>
+                    <button onclick="mudarAba('investimentos')" id="nav-investimentos" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">💰 Investimentos</button>
                 </nav>
             </div>
 
-            <!-- Configurações do Perfil / Menu -->
+            <!-- MENU DE CONFIGURAÇÕES DO PERFIL -->
             <div class="pt-4 border-t border-borderCol relative">
-                <button onclick="alternarMenuConfig()" class="w-full flex items-center justify-between text-xs text-slate-400 hover:text-white px-2 py-1.5 rounded transition">
+                <button onclick="alternarMenuConfig()" class="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-800/50 transition">
                     <span>⚙️ Configurações</span>
                     <span>▼</span>
                 </button>
-                <div id="menuConfigDropdown" class="hidden absolute bottom-12 left-0 w-full bg-darkBg border border-borderCol rounded-xl shadow-xl p-2 space-y-1 z-20">
-                    <button onclick="renomearPerfilAtivo()" class="w-full text-left text-xs text-slate-300 hover:bg-slate-800 px-3 py-2 rounded">✏️ Renomear Perfil</button>
-                    <button onclick="limparDadosPerfilAtivo()" class="w-full text-left text-xs text-rose-400 hover:bg-slate-800 px-3 py-2 rounded">🗑️ Limpar Dados</button>
-                    <button onclick="apagarPerfilAtivo()" class="w-full text-left text-xs text-rose-500 hover:bg-slate-800 px-3 py-2 rounded">⚠️ Excluir Perfil</button>
+                <div id="menuConfigDropdown" class="hidden absolute bottom-14 left-0 w-full bg-darkBg border border-borderCol rounded-xl p-2 space-y-1 shadow-xl z-20">
+                    <button onclick="renomearPerfilAtivo()" class="w-full text-left px-3 py-1.5 rounded text-xs text-slate-300 hover:bg-slate-800">Renomear Perfil</button>
+                    <button onclick="limparDadosPerfilAtivo()" class="w-full text-left px-3 py-1.5 rounded text-xs text-rose-400 hover:bg-slate-800">Limpar Dados</button>
+                    <button onclick="apagarPerfilAtivo()" class="w-full text-left px-3 py-1.5 rounded text-xs text-rose-500 hover:bg-slate-800">Excluir Perfil</button>
                 </div>
             </div>
         </aside>
 
-        <!-- Conteúdo Principal -->
-        <main class="flex-1 p-6 md:p-10 overflow-y-auto space-y-8">
-            
+        <!-- CONTEÚDO PRINCIPAL -->
+        <main class="flex-1 p-4 md:p-8 overflow-y-auto space-y-6">
+
             <!-- ABA: DASHBOARD -->
             <section id="aba-dashboard" class="space-y-6">
-                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
                         <h1 id="tituloDashboard" class="text-2xl font-bold text-white">Visão Geral Pessoal</h1>
-                        <p class="text-sm text-slate-400">Resumo financeiro do mês atual.</p>
+                        <p class="text-xs text-slate-400">Acompanhe seus saldos e o fluxo do mês atual.</p>
                     </div>
-                    <div class="flex gap-3">
-                        <button onclick="abrirModalTransacao()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition shadow-lg shadow-blue-600/20">＋ Novo Lançamento</button>
+                    <div class="flex gap-2">
+                        <button onclick="abrirModalTransacao()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition">+ Novo Lançamento</button>
                     </div>
                 </div>
 
-                <!-- Cards de Resumo -->
+                <!-- CARDS DE RESUMO -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
-                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Patrimônio Total</p>
-                        <h3 id="dashPatrimonio" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    <div class="bg-cardBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Patrimônio Total</p>
+                        <h3 id="dashPatrimonio" class="text-xl font-bold text-white mt-1">R$ 0,00</h3>
                     </div>
-                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
-                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Disponível Corrente</p>
-                        <h3 id="dashDisponivel" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    <div class="bg-cardBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Disponível Corrente</p>
+                        <h3 id="dashDisponivel" class="text-xl font-bold text-blue-400 mt-1">R$ 0,00</h3>
                     </div>
-                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
-                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Entradas do Mês</p>
-                        <h3 id="dashEntradas" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                    <div class="bg-cardBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Entradas (Mês)</p>
+                        <h3 id="dashEntradas" class="text-xl font-bold text-emerald-400 mt-1">R$ 0,00</h3>
                     </div>
-                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
-                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Despesas do Mês</p>
-                        <h3 id="dashDespesas" class="text-2xl font-bold text-rose-400">R$ 0,00</h3>
+                    <div class="bg-cardBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Despesas (Mês)</p>
+                        <h3 id="dashDespesas" class="text-xl font-bold text-rose-400 mt-1">R$ 0,00</h3>
                     </div>
                 </div>
 
-                <!-- Alerta de Limite de Gastos -->
-                <div id="cardAlertaGasto" class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
+                <!-- ALERTA DE TETO DE GASTOS -->
+                <div id="cardAlertaGasto" class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-3">
                     <div class="flex justify-between items-center">
-                        <div>
-                            <h3 class="font-bold text-white text-base">Controle de Teto de Gastos Mensal</h3>
-                            <p class="text-xs text-slate-400 mt-0.5" id="txtStatusLimiteDetalhe">Você gastou R$ 0,00 de um teto de R$ 3.000,00.</p>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <span id="txtStatusLimitePercentual" class="text-sm font-bold text-blue-400">0%</span>
-                            <button onclick="definirLimiteMensalPrompt()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg transition">Definir Teto</button>
-                        </div>
+                        <h4 class="font-bold text-white text-sm">Controle de Teto de Gastos Mensal</h4>
+                        <button onclick="definirLimiteMensalPrompt()" class="text-xs text-blue-400 hover:underline">Ajustar Teto</button>
                     </div>
-                    <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
-                        <div id="barraLimiteGasto" class="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    <p id="txtStatusLimiteDetalhe" class="text-xs text-slate-400">Calculando...</p>
+                    <div class="w-full bg-darkBg h-3 rounded-full overflow-hidden border border-borderCol">
+                        <div id="barraLimiteGasto" class="bg-blue-500 h-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-end">
+                        <span id="txtStatusLimitePercentual" class="text-xs font-bold text-slate-300">0%</span>
                     </div>
                 </div>
 
-                <!-- Gráfico de Fluxo Rápido -->
-                <div class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
+                <!-- GRÁFICO RÁPIDO -->
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
                     <h3 class="font-bold text-white text-base">Fluxo do Mês</h3>
                     <div class="h-64 relative">
                         <canvas id="graficoFluxo"></canvas>
@@ -221,61 +140,58 @@
 
             <!-- ABA: PANORAMA ANUAL -->
             <section id="aba-panorama" class="hidden space-y-6">
-                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div class="flex justify-between items-center">
                     <div>
-                        <h1 class="text-2xl font-bold text-white">Panorama Anual</h1>
-                        <p class="text-sm text-slate-400">Acompanhamento mês a mês e distribuição de categorias.</p>
+                        <h1 class="text-2xl font-bold text-white">Panorama Geral Anual</h1>
+                        <p class="text-xs text-slate-400">Análise completa mês a mês e por categorias.</p>
                     </div>
                     <div>
-                        <select id="filtroAnoPanorama" onchange="atualizarPanoramaGeral()" class="bg-cardBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
-                            <!-- Injetado via JS -->
+                        <select id="filtroAnoPanorama" onchange="atualizarPanoramaGeral()" class="bg-cardBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none">
+                            <!-- Preenchido via JS -->
                         </select>
                     </div>
                 </div>
 
-                <!-- Cards Anuais -->
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
-                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Total Entradas no Ano</p>
-                        <h3 id="panoEntradasAno" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                    <div class="bg-cardBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Total Entradas no Ano</p>
+                        <h3 id="panoEntradasAno" class="text-xl font-bold text-emerald-400 mt-1">R$ 0,00</h3>
                     </div>
-                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
-                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Total Despesas no Ano</p>
-                        <h3 id="panoDespesasAno" class="text-2xl font-bold text-rose-400">R$ 0,00</h3>
+                    <div class="bg-cardBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Total Despesas no Ano</p>
+                        <h3 id="panoDespesasAno" class="text-xl font-bold text-rose-400 mt-1">R$ 0,00</h3>
                     </div>
-                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
-                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Balanço do Ano</p>
-                        <h3 id="panoBalancoAno" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    <div class="bg-cardBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Balanço do Ano</p>
+                        <h3 id="panoBalancoAno" class="text-xl font-bold text-white mt-1">R$ 0,00</h3>
                     </div>
                 </div>
 
-                <!-- Gráficos do Panorama -->
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
-                        <h3 class="font-bold text-white text-base">Evolução Mensal</h3>
-                        <div class="h-72 relative">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
+                        <h3 class="font-bold text-white text-base">Evolução Mensal (Entradas vs Despesas)</h3>
+                        <div class="h-64 relative">
                             <canvas id="graficoEvolucaoMensal"></canvas>
                         </div>
                     </div>
-                    <div class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
-                        <h3 class="font-bold text-white text-base">Maiores Categorias de Despesas</h3>
-                        <div class="h-72 relative flex items-center justify-center">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
+                        <h3 class="font-bold text-white text-base">Maiores Categorias de Gastos</h3>
+                        <div class="h-64 relative flex items-center justify-center">
                             <canvas id="graficoCategoriasAno"></canvas>
                         </div>
                     </div>
                 </div>
 
-                <!-- Tabela Mês a Mês -->
-                <div class="bg-cardBg border border-borderCol rounded-xl p-6 space-y-4">
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
                     <h3 class="font-bold text-white text-base">Detalhamento Mês a Mês</h3>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left border-collapse text-sm">
                             <thead>
-                                <tr class="border-b border-borderCol text-slate-400">
-                                    <th class="py-3 font-medium">Mês</th>
-                                    <th class="py-3 text-right font-medium">Entradas</th>
-                                    <th class="py-3 text-right font-medium">Despesas</th>
-                                    <th class="py-3 text-right font-medium">Resultado</th>
+                                <tr class="border-b border-borderCol text-xs text-slate-400 uppercase">
+                                    <th class="py-3">Mês</th>
+                                    <th class="py-3 text-right">Entradas</th>
+                                    <th class="py-3 text-right">Despesas</th>
+                                    <th class="py-3 text-right">Resultado</th>
                                 </tr>
                             </thead>
                             <tbody id="tabelaMesAMes">
@@ -289,52 +205,41 @@
             <!-- ABA: VISÃO FAMILIAR -->
             <section id="aba-familiar" class="hidden space-y-6">
                 <div>
-                    <h1 class="text-2xl font-bold text-white">Visão Familiar / Conjunta</h1>
-                    <p class="text-sm text-slate-400">Consolidado de todas as contas e gastos marcados como familiares.</p>
+                    <h1 class="text-2xl font-bold text-white">Visão Consolidada Familiar</h1>
+                    <p class="text-xs text-slate-400">Agrega transações marcadas como escopo familiar de todos os perfis.</p>
                 </div>
-
-                <!-- Cards Familiares -->
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
-                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Patrimônio Familiar</p>
-                        <h3 id="famPatrimonio" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    <div class="bg-cardBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Patrimônio Familiar Global</p>
+                        <h3 id="famPatrimonio" class="text-xl font-bold text-white mt-1">R$ 0,00</h3>
                     </div>
-                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
-                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Entradas Familiares</p>
-                        <h3 id="famEntradas" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                    <div class="bg-cardBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Entradas Familiares</p>
+                        <h3 id="famEntradas" class="text-xl font-bold text-emerald-400 mt-1">R$ 0,00</h3>
                     </div>
-                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
-                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Despesas Familiares</p>
-                        <h3 id="famDespesas" class="text-2xl font-bold text-rose-400">R$ 0,00</h3>
-                    </div>
-                </div>
-
-                <!-- Contribuição por Membro -->
-                <div class="space-y-4">
-                    <h3 class="font-bold text-white text-base">Gastos Familiares por Membro</h3>
-                    <div id="listaContribuicoesFamiliares" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <!-- Injetado via JS -->
+                    <div class="bg-cardBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Despesas Familiares</p>
+                        <h3 id="famDespesas" class="text-xl font-bold text-rose-400 mt-1">R$ 0,00</h3>
                     </div>
                 </div>
-
-                <!-- Tabela Lançamentos Familiares -->
-                <div class="bg-cardBg border border-borderCol rounded-xl p-6 space-y-4">
-                    <h3 class="font-bold text-white text-base">Histórico de Lançamentos Familiares</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4" id="listaContribuicoesFamiliares">
+                    <!-- Cards por membro -->
+                </div>
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-4">
+                    <h3 class="font-bold text-white text-base">Histórico de Gastos Familiares</h3>
                     <div class="overflow-x-auto">
                         <table class="w-full text-left border-collapse text-sm">
                             <thead>
-                                <tr class="border-b border-borderCol text-slate-400">
-                                    <th class="py-3 font-medium">Escopo</th>
-                                    <th class="py-3 font-medium">Membro</th>
-                                    <th class="py-3 font-medium">Data</th>
-                                    <th class="py-3 font-medium">Descrição</th>
-                                    <th class="py-3 font-medium">Categoria</th>
-                                    <th class="py-3 text-right font-medium">Valor</th>
+                                <tr class="border-b border-borderCol text-xs text-slate-400 uppercase">
+                                    <th class="py-3">Escopo</th>
+                                    <th class="py-3">Membro</th>
+                                    <th class="py-3">Data</th>
+                                    <th class="py-3">Descrição</th>
+                                    <th class="py-3">Categoria</th>
+                                    <th class="py-3 text-right">Valor</th>
                                 </tr>
                             </thead>
-                            <tbody id="tabelaFamiliar">
-                                <!-- Injetado via JS -->
-                            </tbody>
+                            <tbody id="tabelaFamiliar"></tbody>
                         </table>
                     </div>
                 </div>
@@ -342,48 +247,42 @@
 
             <!-- ABA: LANÇAMENTOS -->
             <section id="aba-lancamentos" class="hidden space-y-6">
-                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div class="flex justify-between items-center">
                     <div>
                         <h1 class="text-2xl font-bold text-white">Lançamentos Financeiros</h1>
-                        <p class="text-sm text-slate-400">Gerencie todas as suas receitas e despesas.</p>
+                        <p class="text-xs text-slate-400">Histórico completo de receitas e despesas do perfil ativo.</p>
                     </div>
-                    <button onclick="abrirModalTransacao()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition shadow-lg shadow-blue-600/20">＋ Novo Lançamento</button>
+                    <button onclick="abrirModalTransacao()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition">+ Novo Lançamento</button>
                 </div>
-
-                <div class="bg-cardBg border border-borderCol rounded-xl p-6 space-y-4">
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left border-collapse text-sm">
-                            <thead>
-                                <tr class="border-b border-borderCol text-slate-400">
-                                    <th class="py-3 font-medium">Escopo</th>
-                                    <th class="py-3 font-medium">Data</th>
-                                    <th class="py-3 font-medium">Descrição</th>
-                                    <th class="py-3 font-medium">Categoria</th>
-                                    <th class="py-3 font-medium">Conta</th>
-                                    <th class="py-3 text-right font-medium">Valor</th>
-                                    <th class="py-3 text-center font-medium">Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tabelaTransacoesCompleta">
-                                <!-- Injetado via JS -->
-                            </tbody>
-                        </table>
-                    </div>
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead>
+                            <tr class="border-b border-borderCol text-xs text-slate-400 uppercase">
+                                <th class="py-3">Escopo</th>
+                                <th class="py-3">Data</th>
+                                <th class="py-3">Descrição</th>
+                                <th class="py-3">Categoria</th>
+                                <th class="py-3">Conta</th>
+                                <th class="py-3 text-right">Valor</th>
+                                <th class="py-3 text-center">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tabelaTransacoesCompleta"></tbody>
+                    </table>
                 </div>
             </section>
 
-            <!-- ABA: CONTAS & CAIXINHAS -->
+            <!-- ABA: CONTAS -->
             <section id="aba-contas" class="hidden space-y-6">
-                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div class="flex justify-between items-center">
                     <div>
-                        <h1 class="text-2xl font-bold text-white">Contas & Caixinhas</h1>
-                        <p class="text-sm text-slate-400">Contas correntes e reservas financeiras do perfil.</p>
+                        <h1 class="text-2xl font-bold text-white">Contas e Caixinhas</h1>
+                        <p class="text-xs text-slate-400">Gerencie suas contas correntes e reservas de dinheiro.</p>
                     </div>
-                    <button onclick="abrirModalConta()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition shadow-lg shadow-blue-600/20">＋ Nova Conta</button>
+                    <button onclick="abrirModalConta()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition">+ Nova Conta</button>
                 </div>
-
                 <div id="gridContas" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <!-- Injetado via JS -->
+                    <!-- Preenchido via JS -->
                 </div>
             </section>
 
@@ -391,11 +290,12 @@
             <section id="aba-orcamentos" class="hidden space-y-6">
                 <div>
                     <h1 class="text-2xl font-bold text-white">Orçamentos</h1>
-                    <p class="text-sm text-slate-400">Planejamento e limites de gastos por categoria.</p>
+                    <p class="text-xs text-slate-400">Gerencie seu teto e limites de gastos mensais.</p>
                 </div>
-                <div class="bg-cardBg border border-borderCol rounded-xl p-8 text-center space-y-3">
-                    <p class="text-slate-400">O controle principal de teto mensal encontra-se ativo diretamente no seu Dashboard.</p>
-                    <button onclick="definirLimiteMensalPrompt()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition">Alterar Teto Mensal</button>
+                <div class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
+                    <h3 class="font-bold text-white text-lg">Definição de Teto Mensal</h3>
+                    <p class="text-xs text-slate-400">Atualmente seu teto de alerta é configurado na tela de visão geral. Você pode alterá-lo clicando no botão abaixo:</p>
+                    <button onclick="definirLimiteMensalPrompt()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition">Alterar Teto de Gastos</button>
                 </div>
             </section>
 
@@ -403,38 +303,31 @@
             <section id="aba-investimentos" class="hidden space-y-6">
                 <div>
                     <h1 class="text-2xl font-bold text-white">Investimentos</h1>
-                    <p class="text-sm text-slate-400">Acompanhamento dos ativos e investimentos cadastrados.</p>
+                    <p class="text-xs text-slate-400">Acompanhe seus saldos investidos.</p>
                 </div>
-
-                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1 max-w-sm">
-                    <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Total Investido</p>
-                    <h3 id="invTotal" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                <div class="bg-cardBg border border-borderCol p-4 rounded-xl mb-4">
+                    <p class="text-xs text-slate-400">Total Investido</p>
+                    <h3 id="invTotal" class="text-2xl font-bold text-emerald-400 mt-1">R$ 0,00</h3>
                 </div>
-
-                <div class="bg-cardBg border border-borderCol rounded-xl p-6 space-y-4">
-                    <h3 class="font-bold text-white text-base">Contas do tipo Investimento</h3>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left border-collapse text-sm">
-                            <thead>
-                                <tr class="border-b border-borderCol text-slate-400">
-                                    <th class="py-3 font-medium">Nome do Ativo / Conta</th>
-                                    <th class="py-3 text-right font-medium">Saldo Atual</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tabelaInvestimentos">
-                                <!-- Injetado via JS -->
-                            </tbody>
-                        </table>
-                    </div>
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead>
+                            <tr class="border-b border-borderCol text-xs text-slate-400 uppercase">
+                                <th class="py-3">Nome do Investimento / Caixinha</th>
+                                <th class="py-3 text-right">Saldo Atual</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tabelaInvestimentos"></tbody>
+                    </table>
                 </div>
             </section>
 
         </main>
     </div>
 
-    <!-- MODAL DE TRANSAÇÃO -->
+    <!-- MODAL DE LANÇAMENTO -->
     <div id="modalTransacao" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-        <div class="bg-cardBg border border-borderCol rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-6">
+        <div class="bg-cardBg border border-borderCol rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-6">
             <div class="flex justify-between items-center border-b border-borderCol pb-4">
                 <h3 id="modalTitulo" class="font-bold text-white text-lg">Novo Lançamento</h3>
                 <button onclick="fecharModalTransacao()" class="text-slate-400 hover:text-white">✕</button>
@@ -446,7 +339,7 @@
                         <label class="block text-xs text-slate-400 mb-1">Tipo</label>
                         <select id="modalTipo" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
                             <option value="EXPENSE">Despesa (-)</option>
-                            <option value="INCOME">Entrada (+)</option>
+                            <option value="INCOME">Receita (+)</option>
                         </select>
                     </div>
                     <div>
@@ -478,9 +371,7 @@
                     </div>
                     <div>
                         <label class="block text-xs text-slate-400 mb-1">Conta Vinculada</label>
-                        <select id="modalConta" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
-                            <!-- Injetado via JS -->
-                        </select>
+                        <select id="modalConta" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500"></select>
                     </div>
                 </div>
                 <div class="pt-4 border-t border-borderCol flex justify-end gap-3">
@@ -525,25 +416,96 @@
         </div>
     </div>
 
-    <!-- SCRIPT DA APLICAÇÃO (Funções de Interface) -->
+    <!-- SCRIPT DO FIREBASE E APLICAÇÃO -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // CONFIGURAÇÃO DO FIREBASE (Substitua pelas suas chaves)
+        const firebaseConfig = {
+            apiKey: "SUA_API_KEY",
+            authDomain: "SEU_PROJECT_ID.firebaseapp.com",
+            projectId: "SEU_PROJECT_ID",
+            storageBucket: "SEU_PROJECT_ID.appspot.com",
+            messagingSenderId: "SUA_MESSAGING_SENDER_ID",
+            appId: "SEU_APP_ID"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const firestore = getFirestore(app);
+        const docRef = doc(firestore, "financas", "dados_gerais");
+
+        // Objeto global de banco de dados
+        window.db = {
+            perfilAtivoId: null,
+            perfis: []
+        };
+
+        // Instâncias globais de gráficos
+        let chartFluxoInstance = null;
+        let chartEvolucaoInstance = null;
+        let chartCategoriasInstance = null;
+
+        // Ouvinte em tempo real do Firestore (Sincroniza automaticamente celular e PC)
+        onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const dadosNuvem = docSnap.data();
+                window.db.perfis = dadosNuvem.perfis || [];
+                window.db.perfilAtivoId = dadosNuvem.perfilAtivoId || null;
+            } else {
+                // Estrutura inicial padrão caso o banco esteja vazio
+                window.db = {
+                    perfilAtivoId: 'perfil_padrao',
+                    perfis: [
+                        {
+                            id: 'perfil_padrao',
+                            nome: 'Principal',
+                            tetoMensal: 3000,
+                            transacoes: [],
+                            contas: [{ id: 'c_padrao', nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }]
+                        }
+                    ]
+                };
+                salvarEstadoGeral();
+            }
+            window.verificarEstadoApp();
+        }, (error) => {
+            console.error("Erro ao sincronizar com o Firestore:", error);
+        });
+
+        // Função global para salvar estado na nuvem
+        window.salvarEstadoGeral = async function() {
+            try {
+                await setDoc(docRef, {
+                    perfilAtivoId: window.db.perfilAtivoId,
+                    perfis: window.db.perfis
+                });
+            } catch (error) {
+                console.error("Erro ao salvar dados no Firestore:", error);
+            }
+        };
+    </script>
+
+    <!-- SCRIPT DAS FUNÇÕES DE INTERFACE -->
     <script>
         window.verificarEstadoApp = function() {
             const telaSelecao = document.getElementById('telaSelecaoPerfil');
             const appPrincipal = document.getElementById('appPrincipal');
 
             if (!db.perfilAtivoId || !db.perfis.some(p => p.id === db.perfilAtivoId)) {
-                telaSelecao.classList.remove('hidden');
-                appPrincipal.classList.add('hidden');
+                if(telaSelecao) telaSelecao.classList.remove('hidden');
+                if(appPrincipal) appPrincipal.classList.add('hidden');
                 renderizarListaPerfisSelecao();
             } else {
-                telaSelecao.classList.add('hidden');
-                appPrincipal.classList.remove('hidden');
+                if(telaSelecao) telaSelecao.classList.add('hidden');
+                if(appPrincipal) appPrincipal.classList.remove('hidden');
                 atualizarInterfacePerfilAtivo();
             }
         }
 
         function renderizarListaPerfisSelecao() {
             const container = document.getElementById('listaPerfisSelecao');
+            if(!container) return;
             container.innerHTML = '';
 
             if (db.perfis.length === 0) {
@@ -633,7 +595,7 @@
 
         window.alternarMenuConfig = function() {
             const menu = document.getElementById('menuConfigDropdown');
-            menu.classList.toggle('hidden');
+            if(menu) menu.classList.toggle('hidden');
         }
 
         function obterPerfilAtivo() {
@@ -645,12 +607,14 @@
             abas.forEach(a => {
                 const sec = document.getElementById(`aba-${a}`);
                 const nav = document.getElementById(`nav-${a}`);
-                if (a === abaId) {
-                    sec.classList.remove('hidden');
-                    nav.className = "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600/10 text-blue-400 transition";
-                } else {
-                    sec.classList.add('hidden');
-                    nav.className = "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition";
+                if (sec && nav) {
+                    if (a === abaId) {
+                        sec.classList.remove('hidden');
+                        nav.className = "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600/10 text-blue-400 transition";
+                    } else {
+                        sec.classList.add('hidden');
+                        nav.className = "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition";
+                    }
                 }
             });
             if (abaId === 'panorama') atualizarPanoramaGeral();
@@ -658,8 +622,11 @@
 
         function atualizarInterfacePerfilAtivo() {
             const perfil = obterPerfilAtivo();
-            document.getElementById('txtPerfilAtivo').innerText = `Perfil: ${perfil.nome}`;
-            document.getElementById('tituloDashboard').innerText = `Visão Geral Pessoal (${perfil.nome})`;
+            if(!perfil) return;
+            const txtPerfil = document.getElementById('txtPerfilAtivo');
+            const tituloDash = document.getElementById('tituloDashboard');
+            if(txtPerfil) txtPerfil.innerText = `Perfil: ${perfil.nome}`;
+            if(tituloDash) tituloDash.innerText = `Visão Geral Pessoal (${perfil.nome})`;
             
             renderizarContas();
             renderizarTransacoes();
@@ -735,6 +702,7 @@
         function renderizarContas() {
             const perfil = obterPerfilAtivo();
             const grid = document.getElementById('gridContas');
+            if(!grid) return;
             grid.innerHTML = '';
 
             perfil.contas.forEach(c => {
@@ -763,6 +731,7 @@
         function atualizarSelectContasModal() {
             const perfil = obterPerfilAtivo();
             const select = document.getElementById('modalConta');
+            if(!select) return;
             select.innerHTML = '';
             perfil.contas.forEach(c => {
                 select.innerHTML += `<option value="${c.id}">${c.nome} (${c.tipo === 'corrente' ? 'Corrente' : 'Investimento'})</option>`;
@@ -844,6 +813,7 @@
         function renderizarTransacoes() {
             const perfil = obterPerfilAtivo();
             const tbody = document.getElementById('tabelaTransacoesCompleta');
+            if(!tbody) return;
             tbody.innerHTML = '';
 
             perfil.transacoes.sort((a, b) => new Date(b.data) - new Date(a.data)).forEach(t => {
@@ -868,6 +838,7 @@
 
         function atualizarDashboard() {
             const perfil = obterPerfilAtivo();
+            if(!perfil) return;
             const hoje = new Date();
             const mesAtual = hoje.toISOString().slice(0, 7);
 
@@ -898,8 +869,6 @@
             const percentual = Math.min(Math.round((despesasMes / teto) * 100), 100);
             document.getElementById('txtStatusLimiteDetalhe').innerText = `Você gastou R$ ${despesasMes.toFixed(2)} de um teto de R$ ${teto.toFixed(2)}.`;
             
-            const cardAlerta = document.getElementById('cardAlertaGasto');
-            cardAlerta.classList.remove('hidden');
             document.getElementById('txtStatusLimitePercentual').innerText = `${percentual}%`;
             document.getElementById('barraLimiteGasto').style.width = `${percentual}%`;
 
@@ -907,9 +876,10 @@
         }
 
         function renderizarGraficoFluxo(entradas, despesas) {
-            const ctx = document.getElementById('graficoFluxo').getContext('2d');
+            const ctx = document.getElementById('graficoFluxo');
+            if(!ctx) return;
             if (chartFluxoInstance) chartFluxoInstance.destroy();
-            chartFluxoInstance = new Chart(ctx, {
+            chartFluxoInstance = new Chart(ctx.getContext('2d'), {
                 type: 'bar',
                 data: {
                     labels: ['Entradas', 'Despesas'],
@@ -939,6 +909,7 @@
 
         function renderizarVisaoFamiliar() {
             const tbody = document.getElementById('tabelaFamiliar');
+            if(!tbody) return;
             tbody.innerHTML = '';
             let famPat = 0, famEnt = 0, famDes = 0;
             const contribuicoes = {};
@@ -971,6 +942,7 @@
             document.getElementById('famDespesas').innerText = `R$ ${famDes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
 
             const divCont = document.getElementById('listaContribuicoesFamiliares');
+            if(!divCont) return;
             divCont.innerHTML = '';
             for (const [membro, total] of Object.entries(contribuicoes)) {
                 divCont.innerHTML += `
@@ -985,6 +957,7 @@
         function renderizarInvestimentos() {
             const perfil = obterPerfilAtivo();
             const tbody = document.getElementById('tabelaInvestimentos');
+            if(!tbody) return;
             tbody.innerHTML = '';
             let totalInv = 0;
 
@@ -1002,7 +975,9 @@
 
         window.atualizarPanoramaGeral = function() {
             const perfil = obterPerfilAtivo();
+            if(!perfil) return;
             const selectAno = document.getElementById('filtroAnoPanorama');
+            if(!selectAno) return;
             
             const anosDisponiveis = [...new Set(perfil.transacoes.map(t => t.data.slice(0, 4)))];
             const anoAtualStr = new Date().getFullYear().toString();
@@ -1074,9 +1049,10 @@
         }
 
         function renderizarGraficoEvolucaoMensal(labels, entradas, despesas) {
-            const ctx = document.getElementById('graficoEvolucaoMensal').getContext('2d');
+            const ctx = document.getElementById('graficoEvolucaoMensal');
+            if(!ctx) return;
             if (chartEvolucaoInstance) chartEvolucaoInstance.destroy();
-            chartEvolucaoInstance = new Chart(ctx, {
+            chartEvolucaoInstance = new Chart(ctx.getContext('2d'), {
                 type: 'bar',
                 data: {
                     labels: labels,
@@ -1095,7 +1071,8 @@
         }
 
         function renderizarGraficoCategoriasAno(catObj) {
-            const ctx = document.getElementById('graficoCategoriasAno').getContext('2d');
+            const ctx = document.getElementById('graficoCategoriasAno');
+            if(!ctx) return;
             if (chartCategoriasInstance) chartCategoriasInstance.destroy();
 
             const sortedCat = Object.entries(catObj).sort((a, b) => b[1] - a[1]).slice(0, 5);
@@ -1107,7 +1084,7 @@
                 data.push(1);
             }
 
-            chartCategoriasInstance = new Chart(ctx, {
+            chartCategoriasInstance = new Chart(ctx.getContext('2d'), {
                 type: 'doughnut',
                 data: {
                     labels: labels,
