@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema Financeiro Pessoal & Familiar</title>
+    <title>Sistema Financeiro Pessoal & Familiar (Firebase)</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -22,6 +22,79 @@
     </script>
     <!-- Chart.js CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Firebase SDKs (Modular v10) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // 🔥 COLE AS SUAS CREDENCIAIS DO FIREBASE AQUI:
+        const firebaseConfig = {
+            apiKey: "SUA_API_KEY",
+            authDomain: "SEU_PROJETO.firebaseapp.com",
+            projectId: "SEU_PROJETO_ID",
+            storageBucket: "SEU_PROJETO.appspot.com",
+            messagingSenderId: "SEU_SENDER_ID",
+            appId: "SEU_APP_ID"
+        };
+
+        // Inicializar Firebase
+        const app = initializeApp(firebaseConfig);
+        const dbFirestore = getFirestore(app);
+
+        // Estrutura padrão inicial
+        let db = {
+            perfilAtivoId: null,
+            perfis: [
+                {
+                    id: 'perfil_padrao',
+                    nome: 'Pessoal',
+                    tetoMensal: 3000,
+                    transacoes: [],
+                    contas: [
+                        { id: 'c_1', nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }
+                    ]
+                }
+            ]
+        };
+
+        let chartFluxoInstance = null;
+        let chartEvolucaoInstance = null;
+        let chartCategoriasInstance = null;
+
+        // Função global para salvar no Firestore (Nuvem) e atualizar interface
+        window.salvarEstadoGeral = async function() {
+            try {
+                // Salva no Firestore na coleção 'sistema', documento 'dados_financeiros'
+                await setDoc(doc(dbFirestore, "sistema", "dados_financeiros"), db);
+            } catch (e) {
+                console.error("Erro ao salvar no Firebase: ", e);
+            }
+            window.verificarEstadoApp();
+        };
+
+        // Carrega dados do Firestore ao iniciar
+        async function carregarDadosNu始めた() {
+            try {
+                const docRef = doc(dbFirestore, "sistema", "dados_financeiros");
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    db = docSnap.data();
+                } else {
+                    // Se não existir, salva o padrão inicial no Firestore
+                    await setDoc(docRef, db);
+                }
+            } catch (e) {
+                console.error("Erro ao carregar do Firebase, usando cache local:", e);
+            }
+            window.verificarEstadoApp();
+        }
+
+        // Executa o carregamento inicial assim que a página abre
+        window.addEventListener('DOMContentLoaded', () => {
+            carregarDadosNu始めた();
+        });
+    </script>
 </head>
 <body class="bg-darkBg text-slate-100 font-sans antialiased min-h-screen flex flex-col">
 
@@ -30,7 +103,7 @@
         <div class="bg-cardBg border border-borderCol rounded-2xl p-8 max-w-md w-full shadow-2xl space-y-6">
             <div class="text-center space-y-2">
                 <h1 class="text-2xl font-bold text-white">Bem-vindo ao Sistema Financeiro</h1>
-                <p class="text-sm text-slate-400">Selecione um perfil ou crie um novo para acessar seus dados.</p>
+                <p class="text-sm text-slate-400">Selecione um perfil ou crie um novo para acessar seus dados na nuvem.</p>
             </div>
             
             <div id="listaPerfisSelecao" class="space-y-3 max-h-60 overflow-y-auto pr-1">
@@ -452,44 +525,17 @@
         </div>
     </div>
 
-    <!-- SCRIPT DA APLICAÇÃO -->
+    <!-- SCRIPT DA APLICAÇÃO (Funções de Interface) -->
     <script>
-        // Estrutura de Banco de Dados LocalStorage
-        let db = JSON.parse(localStorage.getItem('sistema_financeiro_db')) || {
-            perfilAtivoId: null,
-            perfis: [
-                {
-                    id: 'perfil_padrao',
-                    nome: 'Pessoal',
-                    tetoMensal: 3000,
-                    transacoes: [],
-                    contas: [
-                        { id: 'c_1', nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }
-                    ]
-                }
-            ]
-        };
-
-        let chartFluxoInstance = null;
-        let chartEvolucaoInstance = null;
-        let chartCategoriasInstance = null;
-
-        function salvarEstadoGeral() {
-            localStorage.setItem('sistema_financeiro_db', JSON.stringify(db));
-            verificarEstadoApp();
-        }
-
-        function verificarEstadoApp() {
+        window.verificarEstadoApp = function() {
             const telaSelecao = document.getElementById('telaSelecaoPerfil');
             const appPrincipal = document.getElementById('appPrincipal');
 
             if (!db.perfilAtivoId || !db.perfis.some(p => p.id === db.perfilAtivoId)) {
-                // Mostrar tela de seleção
                 telaSelecao.classList.remove('hidden');
                 appPrincipal.classList.add('hidden');
                 renderizarListaPerfisSelecao();
             } else {
-                // Mostrar app principal
                 telaSelecao.classList.add('hidden');
                 appPrincipal.classList.remove('hidden');
                 atualizarInterfacePerfilAtivo();
@@ -523,17 +569,17 @@
             });
         }
 
-        function selecionarPerfil(id) {
+        window.selecionarPerfil = function(id) {
             db.perfilAtivoId = id;
             salvarEstadoGeral();
         }
 
-        function trocarPerfil() {
+        window.trocarPerfil = function() {
             db.perfilAtivoId = null;
             salvarEstadoGeral();
         }
 
-        function adicionarPerfilPrompt() {
+        window.adicionarPerfilPrompt = function() {
             const nome = prompt("Nome do novo perfil:");
             if (nome && nome.trim()) {
                 const novoId = 'perfil_' + Date.now();
@@ -559,14 +605,14 @@
             }
         }
 
-        function apagarPerfilAtivo() {
+        window.apagarPerfilAtivo = function() {
             if (db.perfilAtivoId) {
                 apagarPerfilPorId(db.perfilAtivoId);
             }
         }
 
-        function renomearPerfilAtivo() {
-            const perfil = db.perfis.find(p => p.id === db.perfilAtivoId);
+        window.renomearPerfilAtivo = function() {
+            const perfil = obterPerfilAtivo();
             if (perfil) {
                 const novoNome = prompt("Novo nome para o perfil:", perfil.nome);
                 if (novoNome && novoNome.trim()) {
@@ -576,8 +622,8 @@
             }
         }
 
-        function limparDadosPerfilAtivo() {
-            const perfil = db.perfis.find(p => p.id === db.perfilAtivoId);
+        window.limparDadosPerfilAtivo = function() {
+            const perfil = obterPerfilAtivo();
             if (perfil && confirm("Deseja apagar todas as transações e resetar as contas deste perfil?")) {
                 perfil.transacoes = [];
                 perfil.contas = [{ id: 'c_' + Date.now(), nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }];
@@ -585,7 +631,7 @@
             }
         }
 
-        function alternarMenuConfig() {
+        window.alternarMenuConfig = function() {
             const menu = document.getElementById('menuConfigDropdown');
             menu.classList.toggle('hidden');
         }
@@ -594,7 +640,7 @@
             return db.perfis.find(p => p.id === db.perfilAtivoId) || db.perfis[0];
         }
 
-        function mudarAba(abaId) {
+        window.mudarAba = function(abaId) {
             const abas = ['dashboard', 'panorama', 'familiar', 'lancamentos', 'contas', 'orcamentos', 'investimentos'];
             abas.forEach(a => {
                 const sec = document.getElementById(`aba-${a}`);
@@ -623,7 +669,7 @@
         }
 
         // --- GERENCIAMENTO DE CONTAS ---
-        function abrirModalConta(id = null) {
+        window.abrirModalConta = function(id = null) {
             document.getElementById('modalContaEditId').value = '';
             document.getElementById('formModalConta').reset();
             document.getElementById('modalContaTitulo').innerText = 'Nova Conta ou Caixinha';
@@ -642,11 +688,11 @@
             document.getElementById('modalFormConta').classList.remove('hidden');
         }
 
-        function fecharModalConta() {
+        window.fecharModalConta = function() {
             document.getElementById('modalFormConta').classList.add('hidden');
         }
 
-        function salvarContaModal(event) {
+        window.salvarContaModal = function(event) {
             event.preventDefault();
             const perfil = obterPerfilAtivo();
             const editId = document.getElementById('modalContaEditId').value;
@@ -674,7 +720,7 @@
             salvarEstadoGeral();
         }
 
-        function apagarConta(id) {
+        window.apagarConta = function(id) {
             const perfil = obterPerfilAtivo();
             if (perfil.contas.length <= 1) {
                 alert("Você precisa manter ao menos uma conta cadastrada.");
@@ -724,7 +770,7 @@
         }
 
         // --- GERENCIAMENTO DE TRANSAÇÕES ---
-        function abrirModalTransacao(id = null) {
+        window.abrirModalTransacao = function(id = null) {
             document.getElementById('modalEditId').value = '';
             document.getElementById('formModalTransacao').reset();
             document.getElementById('modalTitulo').innerText = 'Novo Lançamento';
@@ -749,11 +795,11 @@
             document.getElementById('modalTransacao').classList.remove('hidden');
         }
 
-        function fecharModalTransacao() {
+        window.fecharModalTransacao = function() {
             document.getElementById('modalTransacao').classList.add('hidden');
         }
 
-        function salvarTransacaoModal(event) {
+        window.salvarTransacaoModal = function(event) {
             event.preventDefault();
             const perfil = obterPerfilAtivo();
             const editId = document.getElementById('modalEditId').value;
@@ -787,7 +833,7 @@
             salvarEstadoGeral();
         }
 
-        function apagarTransacao(id) {
+        window.apagarTransacao = function(id) {
             const perfil = obterPerfilAtivo();
             if (confirm("Deseja apagar este lançamento?")) {
                 perfil.transacoes = perfil.transacoes.filter(t => t.id !== id);
@@ -848,7 +894,6 @@
             document.getElementById('dashEntradas').innerText = `R$ ${entradasMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
             document.getElementById('dashDespesas').innerText = `R$ ${despesasMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
 
-            // Limite de Gastos
             const teto = perfil.tetoMensal || 3000;
             const percentual = Math.min(Math.round((despesasMes / teto) * 100), 100);
             document.getElementById('txtStatusLimiteDetalhe').innerText = `Você gastou R$ ${despesasMes.toFixed(2)} de um teto de R$ ${teto.toFixed(2)}.`;
@@ -883,7 +928,7 @@
             });
         }
 
-        function definirLimiteMensalPrompt() {
+        window.definirLimiteMensalPrompt = function() {
             const perfil = obterPerfilAtivo();
             const novo = prompt("Informe o novo teto de gastos mensal:", perfil.tetoMensal || 3000);
             if (novo !== null && !isNaN(parseFloat(novo))) {
@@ -955,7 +1000,7 @@
             document.getElementById('invTotal').innerText = `R$ ${totalInv.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
         }
 
-        function atualizarPanoramaGeral() {
+        window.atualizarPanoramaGeral = function() {
             const perfil = obterPerfilAtivo();
             const selectAno = document.getElementById('filtroAnoPanorama');
             
@@ -1078,9 +1123,6 @@
                 }
             });
         }
-
-        // Inicialização
-        verificarEstadoApp();
     </script>
 </body>
 </html>
