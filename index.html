@@ -1,0 +1,1879 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema Financeiro Pessoal & Familiar (Firebase)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkBg: '#0f172a',
+                        cardBg: '#1e293b',
+                        borderCol: '#334155'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Firebase SDKs (Modular v10) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import {
+            getAuth,
+            GoogleAuthProvider,
+            signInWithPopup,
+            signOut,
+            onAuthStateChanged
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import {
+            getFirestore,
+            doc,
+            onSnapshot,
+            setDoc
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // Configuração do projeto Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyCFgCwKtUssuKlHOhdHR3jJud8_PISn-pI",
+            authDomain: "controle-financeiro-a2df2.firebaseapp.com",
+            projectId: "controle-financeiro-a2df2",
+            storageBucket: "controle-financeiro-a2df2.firebasestorage.app",
+            messagingSenderId: "356150237120",
+            appId: "1:356150237120:web:6d649f656dca6e3d81da25",
+            measurementId: "G-NC7CKC8KHL"
+        };
+
+        // Inicializar Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const googleProvider = new GoogleAuthProvider();
+        const dbFirestore = getFirestore(app);
+
+        // Estrutura padrão inicial (usada só se o usuário ainda não tiver dados salvos)
+        // IMPORTANTE: usamos "window.db" (em vez de "let db") porque este bloco é um
+        // <script type="module">, cujas variáveis não ficam visíveis para o script
+        // normal mais abaixo, que é quem monta a interface.
+        window.db = {
+            perfilAtivoId: null,
+            perfis: [
+                {
+                    id: 'perfil_padrao',
+                    nome: 'Pessoal',
+                    tetoMensal: 3000,
+                    transacoes: [],
+                    dividas: [],
+                    categorias: ['Geral', 'Alimentação', 'Transporte', 'Moradia', 'Saúde', 'Educação', 'Lazer', 'Salário', 'Dívidas', 'Outros'],
+                    contas: [
+                        { id: 'c_1', nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }
+                    ]
+                }
+            ]
+        };
+
+        window.chartFluxoInstance = null;
+        window.chartEvolucaoInstance = null;
+        window.chartCategoriasInstance = null;
+        window.chartDespesasCategoriaMesInstance = null;
+        window.chartEntradasCategoriaMesInstance = null;
+
+        let uidAtual = null;
+        let unsubscribeSnapshot = null;
+
+        // --- LOGIN / LOGOUT COM GOOGLE ---
+        // Usamos signInWithPopup: é mais confiável neste caso porque não depende de
+        // guardar dados temporários entre domínios diferentes (github.io e firebaseapp.com),
+        // algo que navegadores como Safari costumam bloquear por privacidade e causava
+        // o login "voltar" para a tela inicial sem concluir.
+        // Só não funciona dentro de navegadores embutidos de apps (WhatsApp, Instagram etc.) —
+        // nesses casos é preciso abrir o site no navegador de verdade (Safari/Chrome).
+        window.entrarComGoogle = async function() {
+            const btn = document.getElementById('btnEntrarGoogle');
+            const erroEl = document.getElementById('erroLogin');
+            erroEl.classList.add('hidden');
+            btn.disabled = true;
+            btn.innerText = 'Entrando...';
+            try {
+                await signInWithPopup(auth, googleProvider);
+                // onAuthStateChanged cuida do resto
+            } catch (e) {
+                console.error("Erro ao entrar com Google:", e);
+                erroEl.innerText = 'Não foi possível entrar. Verifique se pop-ups estão liberados para este site.';
+                erroEl.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Entrar com Google';
+            }
+        };
+
+        window.sair = async function() {
+            if (confirm("Deseja realmente sair da sua conta?")) {
+                if (unsubscribeSnapshot) {
+                    unsubscribeSnapshot();
+                    unsubscribeSnapshot = null;
+                }
+                await signOut(auth);
+            }
+        };
+
+        // Referência do documento no Firestore para o usuário logado
+        function refDadosUsuario(uid) {
+            return doc(dbFirestore, "usuarios", uid, "dados", "financeiro");
+        }
+
+        // Salva o estado atual no Firestore (a interface é atualizada
+        // automaticamente pelo listener onSnapshot quando a gravação chega)
+        window.salvarEstadoGeral = async function() {
+            if (!uidAtual) return;
+            try {
+                await setDoc(refDadosUsuario(uidAtual), window.db);
+            } catch (e) {
+                console.error("Erro ao salvar no Firebase: ", e);
+                alert("Não foi possível salvar suas alterações agora. Verifique sua internet e tente novamente.");
+            }
+        };
+
+        // Escuta em tempo real os dados do usuário logado. Assim, uma alteração
+        // feita no celular aparece automaticamente no computador (e vice-versa).
+        function iniciarListenerDados(uid) {
+            const referencia = refDadosUsuario(uid);
+            unsubscribeSnapshot = onSnapshot(referencia, async (snap) => {
+                if (snap.exists()) {
+                    window.db = snap.data();
+                } else {
+                    // Primeiro acesso deste usuário: cria os dados padrão na nuvem
+                    await setDoc(referencia, window.db);
+                }
+                window.verificarEstadoApp();
+            }, (erro) => {
+                console.error("Erro ao sincronizar com o Firebase:", erro);
+            });
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            const telaLogin = document.getElementById('telaLogin');
+            const telaSelecao = document.getElementById('telaSelecaoPerfil');
+            const appPrincipal = document.getElementById('appPrincipal');
+
+            if (user) {
+                uidAtual = user.uid;
+                telaLogin.classList.add('hidden');
+                document.getElementById('txtUsuarioLogado').innerText = user.displayName || user.email || 'Usuário';
+                if (user.photoURL) {
+                    document.getElementById('avatarUsuarioLogado').src = user.photoURL;
+                    document.getElementById('avatarUsuarioLogado').classList.remove('hidden');
+                }
+                iniciarListenerDados(user.uid);
+            } else {
+                uidAtual = null;
+                if (unsubscribeSnapshot) {
+                    unsubscribeSnapshot();
+                    unsubscribeSnapshot = null;
+                }
+                telaLogin.classList.remove('hidden');
+                telaSelecao.classList.add('hidden');
+                appPrincipal.classList.add('hidden');
+            }
+        });
+    </script>
+</head>
+<body class="bg-darkBg text-slate-100 font-sans antialiased min-h-screen flex flex-col">
+
+    <!-- TELA DE LOGIN -->
+    <div id="telaLogin" class="fixed inset-0 z-50 bg-darkBg flex items-center justify-center p-4">
+        <div class="bg-cardBg border border-borderCol rounded-2xl p-8 max-w-sm w-full shadow-2xl space-y-6 text-center">
+            <div class="space-y-2">
+                <h1 class="text-2xl font-bold text-white">Sistema Financeiro</h1>
+                <p class="text-sm text-slate-400">Entre com sua conta Google para acessar seus dados, sincronizados em todos os seus dispositivos.</p>
+            </div>
+            <button id="btnEntrarGoogle" onclick="entrarComGoogle()" class="w-full bg-white hover:bg-slate-100 text-slate-800 font-medium py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2">
+                <span>🔐 Entrar com Google</span>
+            </button>
+            <p id="erroLogin" class="hidden text-xs text-rose-400"></p>
+        </div>
+    </div>
+
+    <!-- TELA DE SELEÇÃO / CRIAÇÃO DE PERFIL -->
+    <div id="telaSelecaoPerfil" class="hidden fixed inset-0 z-50 bg-darkBg flex items-center justify-center p-4">
+        <div class="bg-cardBg border border-borderCol rounded-2xl p-8 max-w-md w-full shadow-2xl space-y-6">
+            <div class="text-center space-y-2">
+                <h1 class="text-2xl font-bold text-white">Bem-vindo ao Sistema Financeiro</h1>
+                <p class="text-sm text-slate-400">Selecione um perfil ou crie um novo para acessar seus dados na nuvem.</p>
+            </div>
+            
+            <div id="listaPerfisSelecao" class="space-y-3 max-h-60 overflow-y-auto pr-1">
+                <!-- Injetado via JS -->
+            </div>
+
+            <div class="pt-4 border-t border-borderCol flex gap-3">
+                <button onclick="adicionarPerfilPrompt()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2">
+                    <span>➕ Novo Perfil</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- APLICAÇÃO PRINCIPAL -->
+    <div id="appPrincipal" class="hidden flex-1 flex flex-col md:flex-row">
+        <!-- Sidebar de Navegação -->
+        <aside class="w-full md:w-64 bg-cardBg border-r border-borderCol flex flex-col justify-between p-4">
+            <div class="space-y-6">
+                <!-- Info do Usuário Logado -->
+                <div class="flex items-center justify-between border-b border-borderCol pb-4">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <img id="avatarUsuarioLogado" src="" class="hidden w-7 h-7 rounded-full">
+                        <span id="txtUsuarioLogado" class="text-xs text-slate-300 truncate">-</span>
+                    </div>
+                    <button onclick="sair()" class="text-xs bg-slate-800 hover:bg-slate-700 text-rose-400 px-2.5 py-1.5 rounded-lg transition shrink-0" title="Sair da conta">Sair</button>
+                </div>
+
+                <!-- Info do Perfil Ativo -->
+                <div class="flex items-center justify-between border-b border-borderCol pb-4">
+                    <div>
+                        <span class="text-xs text-slate-400">Conta Ativa</span>
+                        <h2 id="txtPerfilAtivo" class="font-bold text-white text-base">Perfil: -</h2>
+                    </div>
+                    <button onclick="trocarPerfil()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1.5 rounded-lg transition" title="Trocar de Perfil">Trocar</button>
+                </div>
+
+                <!-- Links de Navegação -->
+                <nav class="space-y-1">
+                    <button onclick="mudarAba('dashboard')" id="nav-dashboard" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600/10 text-blue-400 transition">📊 Dashboard</button>
+                    <button onclick="mudarAba('panorama')" id="nav-panorama" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">📈 Panorama Anual</button>
+                    <button onclick="mudarAba('familiar')" id="nav-familiar" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">🏠 Visão Familiar</button>
+                    <button onclick="mudarAba('lancamentos')" id="nav-lancamentos" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">💸 Lançamentos</button>
+                    <button onclick="mudarAba('contas')" id="nav-contas" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">🏦 Contas & Caixinhas</button>
+                    <button onclick="mudarAba('orcamentos')" id="nav-orcamentos" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">🎯 Orçamentos</button>
+                    <button onclick="mudarAba('investimentos')" id="nav-investimentos" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">💎 Investimentos</button>
+                    <button onclick="mudarAba('dividas')" id="nav-dividas" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition">💳 Dívidas</button>
+                </nav>
+            </div>
+
+            <!-- Configurações do Perfil / Menu -->
+            <div class="pt-4 border-t border-borderCol relative">
+                <button onclick="alternarMenuConfig()" class="w-full flex items-center justify-between text-xs text-slate-400 hover:text-white px-2 py-1.5 rounded transition">
+                    <span>⚙️ Configurações</span>
+                    <span>▼</span>
+                </button>
+                <div id="menuConfigDropdown" class="hidden absolute bottom-12 left-0 w-full bg-darkBg border border-borderCol rounded-xl shadow-xl p-2 space-y-1 z-20">
+                    <button onclick="abrirModalCategorias()" class="w-full text-left text-xs text-slate-300 hover:bg-slate-800 px-3 py-2 rounded">🏷️ Gerenciar Categorias</button>
+                    <button onclick="renomearPerfilAtivo()" class="w-full text-left text-xs text-slate-300 hover:bg-slate-800 px-3 py-2 rounded">✏️ Renomear Perfil</button>
+                    <button onclick="limparDadosPerfilAtivo()" class="w-full text-left text-xs text-rose-400 hover:bg-slate-800 px-3 py-2 rounded">🗑️ Limpar Dados</button>
+                    <button onclick="apagarPerfilAtivo()" class="w-full text-left text-xs text-rose-500 hover:bg-slate-800 px-3 py-2 rounded">⚠️ Excluir Perfil</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Conteúdo Principal -->
+        <main class="flex-1 p-6 md:p-10 overflow-y-auto space-y-8">
+            
+            <!-- ABA: DASHBOARD -->
+            <section id="aba-dashboard" class="space-y-6">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <h1 id="tituloDashboard" class="text-2xl font-bold text-white">Visão Geral Pessoal</h1>
+                        <p class="text-sm text-slate-400">Resumo financeiro do mês atual.</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button onclick="abrirModalTransacao()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition shadow-lg shadow-blue-600/20">＋ Novo Lançamento</button>
+                    </div>
+                </div>
+
+                <!-- Cards de Resumo -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Patrimônio Total</p>
+                        <h3 id="dashPatrimonio" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Disponível Corrente</p>
+                        <h3 id="dashDisponivel" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Entradas do Mês</p>
+                        <h3 id="dashEntradas" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Despesas do Mês</p>
+                        <h3 id="dashDespesas" class="text-2xl font-bold text-rose-400">R$ 0,00</h3>
+                    </div>
+                </div>
+
+                <!-- Alerta de Limite de Gastos -->
+                <div id="cardAlertaGasto" class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h3 class="font-bold text-white text-base">Controle de Teto de Gastos Mensal</h3>
+                            <p class="text-xs text-slate-400 mt-0.5" id="txtStatusLimiteDetalhe">Você gastou R$ 0,00 de um teto de R$ 3.000,00.</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span id="txtStatusLimitePercentual" class="text-sm font-bold text-blue-400">0%</span>
+                            <button onclick="definirLimiteMensalPrompt()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg transition">Definir Teto</button>
+                        </div>
+                    </div>
+                    <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                        <div id="barraLimiteGasto" class="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <!-- Gráfico de Fluxo Rápido -->
+                <div class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
+                    <h3 class="font-bold text-white text-base">Fluxo do Mês</h3>
+                    <div class="h-64 relative">
+                        <canvas id="graficoFluxo"></canvas>
+                    </div>
+                </div>
+
+                <!-- Gráficos de Categorias do Mês -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
+                        <h3 class="font-bold text-white text-base">Despesas do Mês por Categoria</h3>
+                        <div class="h-64 relative flex items-center justify-center">
+                            <canvas id="graficoDespesasCategoriaMes"></canvas>
+                        </div>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
+                        <h3 class="font-bold text-white text-base">Entradas do Mês por Categoria</h3>
+                        <div class="h-64 relative flex items-center justify-center">
+                            <canvas id="graficoEntradasCategoriaMes"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ABA: PANORAMA ANUAL -->
+            <section id="aba-panorama" class="hidden space-y-6">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <h1 class="text-2xl font-bold text-white">Panorama Anual</h1>
+                        <p class="text-sm text-slate-400">Acompanhamento mês a mês e distribuição de categorias.</p>
+                    </div>
+                    <div>
+                        <select id="filtroAnoPanorama" onchange="atualizarPanoramaGeral()" class="bg-cardBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <!-- Injetado via JS -->
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Cards Anuais -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Total Entradas no Ano</p>
+                        <h3 id="panoEntradasAno" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Total Despesas no Ano</p>
+                        <h3 id="panoDespesasAno" class="text-2xl font-bold text-rose-400">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Balanço do Ano</p>
+                        <h3 id="panoBalancoAno" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    </div>
+                </div>
+
+                <!-- Gráficos do Panorama -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
+                        <h3 class="font-bold text-white text-base">Evolução Mensal</h3>
+                        <div class="h-72 relative">
+                            <canvas id="graficoEvolucaoMensal"></canvas>
+                        </div>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-6 rounded-xl space-y-4">
+                        <h3 class="font-bold text-white text-base">Maiores Categorias de Despesas</h3>
+                        <div class="h-72 relative flex items-center justify-center">
+                            <canvas id="graficoCategoriasAno"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabela Mês a Mês -->
+                <div class="bg-cardBg border border-borderCol rounded-xl p-6 space-y-4">
+                    <h3 class="font-bold text-white text-base">Detalhamento Mês a Mês</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="border-b border-borderCol text-slate-400">
+                                    <th class="py-3 font-medium">Mês</th>
+                                    <th class="py-3 text-right font-medium">Entradas</th>
+                                    <th class="py-3 text-right font-medium">Despesas</th>
+                                    <th class="py-3 text-right font-medium">Resultado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaMesAMes">
+                                <!-- Preenchido via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ABA: VISÃO FAMILIAR -->
+            <section id="aba-familiar" class="hidden space-y-6">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">Visão Familiar / Conjunta</h1>
+                    <p class="text-sm text-slate-400">Consolidado de todas as contas e gastos marcados como familiares.</p>
+                </div>
+
+                <!-- Cards Familiares -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Patrimônio Familiar</p>
+                        <h3 id="famPatrimonio" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Entradas Familiares</p>
+                        <h3 id="famEntradas" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Despesas Familiares</p>
+                        <h3 id="famDespesas" class="text-2xl font-bold text-rose-400">R$ 0,00</h3>
+                    </div>
+                </div>
+
+                <!-- Saldo entre Membros (despesas divididas) -->
+                <div class="space-y-4">
+                    <h3 class="font-bold text-white text-base">Saldo entre Membros</h3>
+                    <div id="listaSaldoMembros" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <!-- Injetado via JS -->
+                    </div>
+                </div>
+
+                <!-- Contribuição por Membro -->
+                <div class="space-y-4">
+                    <h3 class="font-bold text-white text-base">Gastos Familiares por Membro</h3>
+                    <div id="listaContribuicoesFamiliares" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <!-- Injetado via JS -->
+                    </div>
+                </div>
+
+                <!-- Tabela Lançamentos Familiares -->
+                <div class="bg-cardBg border border-borderCol rounded-xl p-6 space-y-4">
+                    <h3 class="font-bold text-white text-base">Histórico de Lançamentos Familiares</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="border-b border-borderCol text-slate-400">
+                                    <th class="py-3 font-medium">Escopo</th>
+                                    <th class="py-3 font-medium">Membro</th>
+                                    <th class="py-3 font-medium">Data</th>
+                                    <th class="py-3 font-medium">Descrição</th>
+                                    <th class="py-3 font-medium">Categoria</th>
+                                    <th class="py-3 font-medium">Divisão</th>
+                                    <th class="py-3 text-right font-medium">Valor</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaFamiliar">
+                                <!-- Injetado via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ABA: LANÇAMENTOS -->
+            <section id="aba-lancamentos" class="hidden space-y-6">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <h1 class="text-2xl font-bold text-white">Lançamentos Financeiros</h1>
+                        <p class="text-sm text-slate-400">Gerencie todas as suas receitas e despesas.</p>
+                    </div>
+                    <button onclick="abrirModalTransacao()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition shadow-lg shadow-blue-600/20">＋ Novo Lançamento</button>
+                </div>
+
+                <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Filtrar por mês</label>
+                        <input type="month" id="filtroMesLancamentos" onchange="renderizarTransacoes()" class="bg-cardBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                    </div>
+                    <button onclick="limparFiltroMesLancamentos()" class="mt-1 sm:mt-5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 rounded-xl transition w-fit">Ver todos os meses</button>
+                </div>
+
+                <div class="bg-cardBg border border-borderCol rounded-xl p-6 space-y-4">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="border-b border-borderCol text-slate-400">
+                                    <th class="py-3 font-medium">Escopo</th>
+                                    <th class="py-3 font-medium">Data</th>
+                                    <th class="py-3 font-medium">Descrição</th>
+                                    <th class="py-3 font-medium">Categoria</th>
+                                    <th class="py-3 font-medium">Conta</th>
+                                    <th class="py-3 font-medium">Forma</th>
+                                    <th class="py-3 text-right font-medium">Valor</th>
+                                    <th class="py-3 text-center font-medium">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaTransacoesCompleta">
+                                <!-- Injetado via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ABA: CONTAS & CAIXINHAS -->
+            <section id="aba-contas" class="hidden space-y-6">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <h1 class="text-2xl font-bold text-white">Contas & Caixinhas</h1>
+                        <p class="text-sm text-slate-400">Contas correntes e reservas financeiras do perfil.</p>
+                    </div>
+                    <button onclick="abrirModalConta()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition shadow-lg shadow-blue-600/20">＋ Nova Conta</button>
+                </div>
+
+                <div id="gridContas" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- Injetado via JS -->
+                </div>
+            </section>
+
+            <!-- ABA: ORÇAMENTOS -->
+            <section id="aba-orcamentos" class="hidden space-y-6">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">Orçamentos</h1>
+                    <p class="text-sm text-slate-400">Planejamento e limites de gastos por categoria.</p>
+                </div>
+                <div class="bg-cardBg border border-borderCol rounded-xl p-8 text-center space-y-3">
+                    <p class="text-slate-400">O controle principal de teto mensal encontra-se ativo diretamente no seu Dashboard.</p>
+                    <button onclick="definirLimiteMensalPrompt()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition">Alterar Teto Mensal</button>
+                </div>
+            </section>
+
+            <!-- ABA: INVESTIMENTOS -->
+            <section id="aba-investimentos" class="hidden space-y-6">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">Investimentos</h1>
+                    <p class="text-sm text-slate-400">Acompanhamento dos ativos e investimentos cadastrados.</p>
+                </div>
+
+                <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1 max-w-sm">
+                    <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Total Investido</p>
+                    <h3 id="invTotal" class="text-2xl font-bold text-emerald-400">R$ 0,00</h3>
+                </div>
+
+                <div class="bg-cardBg border border-borderCol rounded-xl p-6 space-y-4">
+                    <h3 class="font-bold text-white text-base">Contas do tipo Investimento</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="border-b border-borderCol text-slate-400">
+                                    <th class="py-3 font-medium">Nome do Ativo / Conta</th>
+                                    <th class="py-3 text-right font-medium">Saldo Atual</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaInvestimentos">
+                                <!-- Injetado via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ABA: DÍVIDAS -->
+            <section id="aba-dividas" class="hidden space-y-6">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <h1 class="text-2xl font-bold text-white">Dívidas</h1>
+                        <p class="text-sm text-slate-400">Financiamentos, parcelamentos e outras dívidas com pagamento mensal. As parcelas entram automaticamente como despesa em cada mês, no Dashboard e no Panorama Anual.</p>
+                    </div>
+                    <button onclick="abrirModalDivida()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition shadow-lg shadow-blue-600/20">＋ Nova Dívida</button>
+                </div>
+
+                <!-- Cards de Resumo de Dívidas -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Dívidas Ativas</p>
+                        <h3 id="dividasQtdAtivas" class="text-2xl font-bold text-white">0</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Comprometido Este Mês</p>
+                        <h3 id="dividasComprometidoMes" class="text-2xl font-bold text-rose-400">R$ 0,00</h3>
+                    </div>
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-1">
+                        <p class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Total Restante a Pagar</p>
+                        <h3 id="dividasTotalRestante" class="text-2xl font-bold text-white">R$ 0,00</h3>
+                    </div>
+                </div>
+
+                <div id="gridDividas" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <!-- Injetado via JS -->
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- MODAL DE TRANSAÇÃO -->
+    <div id="modalTransacao" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+        <div class="bg-cardBg border border-borderCol rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-6">
+            <div class="flex justify-between items-center border-b border-borderCol pb-4">
+                <h3 id="modalTitulo" class="font-bold text-white text-lg">Novo Lançamento</h3>
+                <button onclick="fecharModalTransacao()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <form id="formModalTransacao" onsubmit="salvarTransacaoModal(event)" class="space-y-4">
+                <input type="hidden" id="modalEditId">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Tipo</label>
+                        <select id="modalTipo" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <option value="EXPENSE">Despesa (-)</option>
+                            <option value="INCOME">Entrada (+)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Escopo</label>
+                        <select id="modalEscopo" onchange="alternarDivisaoFamiliar()" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <option value="pessoal">Pessoal</option>
+                            <option value="familiar">Familiar</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Data</label>
+                        <input type="date" id="modalData" required class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Valor (R$)</label>
+                        <input type="number" step="0.01" id="modalValor" required placeholder="0.00" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Descrição</label>
+                    <input type="text" id="modalDescricao" required placeholder="Ex: Supermercado, Aluguel..." class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Categoria</label>
+                        <select id="modalCategoria" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <!-- Injetado via JS -->
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Conta Vinculada</label>
+                        <select id="modalConta" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <!-- Injetado via JS -->
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Forma de Pagamento</label>
+                    <select id="modalFormaPagamento" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                        <option value="dinheiro">Dinheiro</option>
+                        <option value="pix">Pix</option>
+                        <option value="debito">Débito</option>
+                        <option value="credito">Crédito</option>
+                        <option value="boleto">Boleto</option>
+                    </select>
+                </div>
+                <div id="divDivisaoFamiliar" class="hidden bg-darkBg border border-borderCol rounded-xl p-3 space-y-3">
+                    <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                        <input type="checkbox" id="modalDividir" onchange="alternarSelectDivisao()">
+                        Dividir esta despesa com outro membro da família
+                    </label>
+                    <div id="divSelectDivisao" class="hidden">
+                        <label class="block text-xs text-slate-400 mb-1">Dividir com</label>
+                        <select id="modalDivididoComId" class="w-full bg-cardBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <!-- Injetado via JS -->
+                        </select>
+                        <p class="text-xs text-slate-500 mt-1">Metade do valor ficará registrada como dívida desse membro com você.</p>
+                    </div>
+                </div>
+                <div class="pt-4 border-t border-borderCol flex justify-end gap-3">
+                    <button type="button" onclick="fecharModalTransacao()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-4 py-2 rounded-xl text-sm transition">Cancelar</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition">Salvar Lançamento</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL DE CONTA -->
+    <div id="modalFormConta" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+        <div class="bg-cardBg border border-borderCol rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-6">
+            <div class="flex justify-between items-center border-b border-borderCol pb-4">
+                <h3 id="modalContaTitulo" class="font-bold text-white text-lg">Nova Conta ou Caixinha</h3>
+                <button onclick="fecharModalConta()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <form id="formModalConta" onsubmit="salvarContaModal(event)" class="space-y-4">
+                <input type="hidden" id="modalContaEditId">
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Nome da Conta</label>
+                    <input type="text" id="modalContaNome" required placeholder="Ex: Nubank, Carteira..." class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Tipo</label>
+                        <select id="modalContaTipo" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <option value="corrente">Conta Corrente</option>
+                            <option value="investimento">Investimento</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Saldo Inicial (R$)</label>
+                        <input type="number" step="0.01" id="modalContaValor" required placeholder="0.00" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                    </div>
+                </div>
+                <div class="pt-4 border-t border-borderCol flex justify-end gap-3">
+                    <button type="button" onclick="fecharModalConta()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-4 py-2 rounded-xl text-sm transition">Cancelar</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition">Salvar Conta</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL DE DÍVIDA -->
+    <div id="modalFormDivida" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+        <div class="bg-cardBg border border-borderCol rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b border-borderCol pb-4">
+                <h3 id="modalDividaTitulo" class="font-bold text-white text-lg">Nova Dívida</h3>
+                <button onclick="fecharModalDivida()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <form id="formModalDivida" onsubmit="salvarDividaModal(event)" class="space-y-4">
+                <input type="hidden" id="modalDividaEditId">
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Nome da Dívida</label>
+                    <input type="text" id="modalDividaNome" required placeholder="Ex: Financiamento do carro, Cartão parcelado..." class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Valor da Parcela (R$)</label>
+                        <input type="number" step="0.01" id="modalDividaValorParcela" required placeholder="0.00" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Parcelas Restantes</label>
+                        <input type="number" step="1" min="1" id="modalDividaParcelasRestantes" required placeholder="Ex: 12" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Mês da Próxima Parcela</label>
+                    <input type="month" id="modalDividaMesInicial" required class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                    <p class="text-xs text-slate-500 mt-1">A partir desse mês, uma despesa é lançada automaticamente todo mês, pelo número de parcelas informado.</p>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Escopo</label>
+                        <select id="modalDividaEscopo" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <option value="pessoal">Pessoal</option>
+                            <option value="familiar">Familiar</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Categoria</label>
+                        <select id="modalDividaCategoria" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <!-- Injetado via JS -->
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Conta Vinculada</label>
+                        <select id="modalDividaContaId" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <!-- Injetado via JS -->
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Forma de Pagamento</label>
+                        <select id="modalDividaFormaPagamento" class="w-full bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500">
+                            <option value="boleto">Boleto</option>
+                            <option value="debito">Débito</option>
+                            <option value="credito">Crédito</option>
+                            <option value="pix">Pix</option>
+                            <option value="dinheiro">Dinheiro</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="pt-4 border-t border-borderCol flex justify-end gap-3">
+                    <button type="button" onclick="fecharModalDivida()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-4 py-2 rounded-xl text-sm transition">Cancelar</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition">Salvar Dívida</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL DE GERENCIAR CATEGORIAS -->
+    <div id="modalCategorias" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+        <div class="bg-cardBg border border-borderCol rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-6">
+            <div class="flex justify-between items-center border-b border-borderCol pb-4">
+                <h3 class="font-bold text-white text-lg">Gerenciar Categorias</h3>
+                <button onclick="fecharModalCategorias()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+
+            <div class="flex gap-2">
+                <input type="text" id="inputNovaCategoria" placeholder="Nome da nova categoria" class="flex-1 bg-darkBg border border-borderCol text-white text-sm rounded-xl px-3 py-2 outline-none focus:border-blue-500" onkeydown="if(event.key==='Enter'){event.preventDefault();adicionarCategoria();}">
+                <button onclick="adicionarCategoria()" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition shrink-0">＋ Adicionar</button>
+            </div>
+
+            <div id="listaCategoriasGerenciar" class="space-y-2 max-h-72 overflow-y-auto pr-1">
+                <!-- Injetado via JS -->
+            </div>
+
+            <p class="text-xs text-slate-500">Essas categorias ficam disponíveis para escolher nos lançamentos e nas dívidas deste perfil. Excluir uma categoria não apaga os lançamentos que já usam ela.</p>
+
+            <div class="pt-4 border-t border-borderCol flex justify-end">
+                <button type="button" onclick="fecharModalCategorias()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-4 py-2 rounded-xl text-sm transition">Fechar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCRIPT DA APLICAÇÃO (Funções de Interface) -->
+    <script>
+        window.verificarEstadoApp = function() {
+            const telaSelecao = document.getElementById('telaSelecaoPerfil');
+            const appPrincipal = document.getElementById('appPrincipal');
+
+            if (!db.perfilAtivoId || !db.perfis.some(p => p.id === db.perfilAtivoId)) {
+                telaSelecao.classList.remove('hidden');
+                appPrincipal.classList.add('hidden');
+                renderizarListaPerfisSelecao();
+            } else {
+                telaSelecao.classList.add('hidden');
+                appPrincipal.classList.remove('hidden');
+                atualizarInterfacePerfilAtivo();
+            }
+        }
+
+        function renderizarListaPerfisSelecao() {
+            const container = document.getElementById('listaPerfisSelecao');
+            container.innerHTML = '';
+
+            if (db.perfis.length === 0) {
+                container.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">Nenhum perfil cadastrado. Crie um abaixo.</p>';
+                return;
+            }
+
+            db.perfis.forEach(p => {
+                container.innerHTML += `
+                    <div onclick="selecionarPerfil('${p.id}')" class="bg-darkBg border border-borderCol hover:border-blue-500/50 p-4 rounded-xl cursor-pointer transition flex items-center justify-between group">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-lg bg-blue-600/10 text-blue-400 flex items-center justify-center font-bold text-base">
+                                ${p.nome.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-white group-hover:text-blue-400 transition">${p.nome}</h3>
+                                <p class="text-xs text-slate-400">${p.contas.length} conta(s) cadastrada(s)</p>
+                            </div>
+                        </div>
+                        <span class="text-slate-500 group-hover:text-white transition">→</span>
+                    </div>
+                `;
+            });
+        }
+
+        window.selecionarPerfil = function(id) {
+            db.perfilAtivoId = id;
+            salvarEstadoGeral();
+        }
+
+        window.trocarPerfil = function() {
+            db.perfilAtivoId = null;
+            salvarEstadoGeral();
+        }
+
+        window.adicionarPerfilPrompt = function() {
+            const nome = prompt("Nome do novo perfil:");
+            if (nome && nome.trim()) {
+                const novoId = 'perfil_' + Date.now();
+                db.perfis.push({
+                    id: novoId,
+                    nome: nome.trim(),
+                    tetoMensal: 3000,
+                    transacoes: [],
+                    dividas: [],
+                    categorias: [...CATEGORIAS_PADRAO],
+                    contas: [{ id: 'c_' + Date.now(), nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }]
+                });
+                db.perfilAtivoId = novoId;
+                salvarEstadoGeral();
+            }
+        }
+
+        function apagarPerfilPorId(id) {
+            if (confirm("Deseja realmente excluir este perfil e todos os seus dados?")) {
+                db.perfis = db.perfis.filter(p => p.id !== id);
+                if (db.perfilAtivoId === id) {
+                    db.perfilAtivoId = db.perfis.length > 0 ? db.perfis[0].id : null;
+                }
+                salvarEstadoGeral();
+            }
+        }
+
+        window.apagarPerfilAtivo = function() {
+            if (db.perfilAtivoId) {
+                apagarPerfilPorId(db.perfilAtivoId);
+            }
+        }
+
+        window.renomearPerfilAtivo = function() {
+            const perfil = obterPerfilAtivo();
+            if (perfil) {
+                const novoNome = prompt("Novo nome para o perfil:", perfil.nome);
+                if (novoNome && novoNome.trim()) {
+                    perfil.nome = novoNome.trim();
+                    salvarEstadoGeral();
+                }
+            }
+        }
+
+        window.limparDadosPerfilAtivo = function() {
+            const perfil = obterPerfilAtivo();
+            if (perfil && confirm("Deseja apagar todas as transações, dívidas e resetar as contas deste perfil?")) {
+                perfil.transacoes = [];
+                perfil.dividas = [];
+                perfil.contas = [{ id: 'c_' + Date.now(), nome: 'Conta Principal', saldo: 0, tipo: 'corrente' }];
+                salvarEstadoGeral();
+            }
+        }
+
+        window.alternarMenuConfig = function() {
+            const menu = document.getElementById('menuConfigDropdown');
+            menu.classList.toggle('hidden');
+        }
+
+        const CATEGORIAS_PADRAO = ['Geral', 'Alimentação', 'Transporte', 'Moradia', 'Saúde', 'Educação', 'Lazer', 'Salário', 'Dívidas', 'Outros'];
+
+        function obterPerfilAtivo() {
+            const perfil = db.perfis.find(p => p.id === db.perfilAtivoId) || db.perfis[0];
+            // Compatibilidade: perfis criados antes das funções de Dívidas/Categorias não têm esses campos
+            if (perfil && !perfil.dividas) perfil.dividas = [];
+            if (perfil && !perfil.categorias) perfil.categorias = [...CATEGORIAS_PADRAO];
+            return perfil;
+        }
+
+        window.mudarAba = function(abaId) {
+            const abas = ['dashboard', 'panorama', 'familiar', 'lancamentos', 'contas', 'orcamentos', 'investimentos', 'dividas'];
+            abas.forEach(a => {
+                const sec = document.getElementById(`aba-${a}`);
+                const nav = document.getElementById(`nav-${a}`);
+                if (a === abaId) {
+                    sec.classList.remove('hidden');
+                    nav.className = "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium bg-blue-600/10 text-blue-400 transition";
+                } else {
+                    sec.classList.add('hidden');
+                    nav.className = "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition";
+                }
+            });
+            if (abaId === 'panorama') atualizarPanoramaGeral();
+            if (abaId === 'dividas') renderizarDividas();
+        }
+
+        function atualizarInterfacePerfilAtivo() {
+            const perfil = obterPerfilAtivo();
+            document.getElementById('txtPerfilAtivo').innerText = `Perfil: ${perfil.nome}`;
+            document.getElementById('tituloDashboard').innerText = `Visão Geral Pessoal (${perfil.nome})`;
+            
+            renderizarContas();
+            renderizarTransacoes();
+            renderizarVisaoFamiliar();
+            renderizarInvestimentos();
+            renderizarDividas();
+            atualizarDashboard();
+
+            const abaVisivelAtual = ['dashboard', 'panorama', 'familiar', 'lancamentos', 'contas', 'orcamentos', 'investimentos', 'dividas']
+                .find(a => !document.getElementById(`aba-${a}`).classList.contains('hidden'));
+            if (abaVisivelAtual === 'panorama') atualizarPanoramaGeral();
+        }
+
+        // --- GERENCIAMENTO DE CONTAS ---
+        window.abrirModalConta = function(id = null) {
+            document.getElementById('modalContaEditId').value = '';
+            document.getElementById('formModalConta').reset();
+            document.getElementById('modalContaTitulo').innerText = 'Nova Conta ou Caixinha';
+            
+            if (id) {
+                const perfil = obterPerfilAtivo();
+                const conta = perfil.contas.find(c => c.id === id);
+                if (conta) {
+                    document.getElementById('modalContaEditId').value = conta.id;
+                    document.getElementById('modalContaNome').value = conta.nome;
+                    document.getElementById('modalContaTipo').value = conta.tipo;
+                    document.getElementById('modalContaValor').value = conta.saldo;
+                    document.getElementById('modalContaTitulo').innerText = 'Editar Conta ou Caixinha';
+                }
+            }
+            document.getElementById('modalFormConta').classList.remove('hidden');
+        }
+
+        window.fecharModalConta = function() {
+            document.getElementById('modalFormConta').classList.add('hidden');
+        }
+
+        window.salvarContaModal = function(event) {
+            event.preventDefault();
+            const perfil = obterPerfilAtivo();
+            const editId = document.getElementById('modalContaEditId').value;
+            const nome = document.getElementById('modalContaNome').value.trim();
+            const tipo = document.getElementById('modalContaTipo').value;
+            const saldo = parseFloat(document.getElementById('modalContaValor').value) || 0;
+
+            if (editId) {
+                const conta = perfil.contas.find(c => c.id === editId);
+                if (conta) {
+                    conta.nome = nome;
+                    conta.tipo = tipo;
+                    conta.saldo = saldo;
+                }
+            } else {
+                perfil.contas.push({
+                    id: 'c_' + Date.now(),
+                    nome,
+                    tipo,
+                    saldo
+                });
+            }
+
+            fecharModalConta();
+            salvarEstadoGeral();
+        }
+
+        window.apagarConta = function(id) {
+            const perfil = obterPerfilAtivo();
+            if (perfil.contas.length <= 1) {
+                alert("Você precisa manter ao menos uma conta cadastrada.");
+                return;
+            }
+            if (confirm("Deseja apagar esta conta?")) {
+                perfil.contas = perfil.contas.filter(c => c.id !== id);
+                salvarEstadoGeral();
+            }
+        }
+
+        function renderizarContas() {
+            const perfil = obterPerfilAtivo();
+            const grid = document.getElementById('gridContas');
+            grid.innerHTML = '';
+
+            perfil.contas.forEach(c => {
+                grid.innerHTML += `
+                    <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-3">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <span class="text-xs px-2 py-0.5 rounded font-medium ${c.tipo === 'corrente' ? 'bg-blue-500/10 text-blue-400' : 'bg-emerald-500/10 text-emerald-400'}">${c.tipo === 'corrente' ? 'Conta Corrente' : 'Investimento'}</span>
+                                <h3 class="font-bold text-white text-lg mt-1">${c.nome}</h3>
+                            </div>
+                            <div class="flex gap-1">
+                                <button onclick="abrirModalConta('${c.id}')" class="p-1 text-slate-400 hover:text-white" title="Editar">✏️</button>
+                                <button onclick="apagarConta('${c.id}')" class="p-1 text-slate-400 hover:text-rose-400" title="Apagar">🗑️</button>
+                            </div>
+                        </div>
+                        <div>
+                            <p class="text-xs text-slate-400">Saldo Atual</p>
+                            <h4 class="text-2xl font-bold text-white">R$ ${c.saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h4>
+                        </div>
+                    </div>
+                `;
+            });
+            atualizarSelectContasModal();
+        }
+
+        function preencherSelectContas(selectId) {
+            const perfil = obterPerfilAtivo();
+            const select = document.getElementById(selectId);
+            select.innerHTML = '';
+            perfil.contas.forEach(c => {
+                select.innerHTML += `<option value="${c.id}">${c.nome} (${c.tipo === 'corrente' ? 'Corrente' : 'Investimento'})</option>`;
+            });
+        }
+
+        function atualizarSelectContasModal() {
+            preencherSelectContas('modalConta');
+        }
+
+        // --- GERENCIAMENTO DE CATEGORIAS ---
+        function preencherSelectCategorias(selectId) {
+            const perfil = obterPerfilAtivo();
+            const select = document.getElementById(selectId);
+            select.innerHTML = '';
+            perfil.categorias.forEach(c => {
+                select.innerHTML += `<option value="${c}">${c}</option>`;
+            });
+        }
+
+        window.abrirModalCategorias = function() {
+            document.getElementById('menuConfigDropdown').classList.add('hidden');
+            document.getElementById('inputNovaCategoria').value = '';
+            renderizarListaCategoriasGerenciar();
+            document.getElementById('modalCategorias').classList.remove('hidden');
+        }
+
+        window.fecharModalCategorias = function() {
+            document.getElementById('modalCategorias').classList.add('hidden');
+        }
+
+        function renderizarListaCategoriasGerenciar() {
+            const perfil = obterPerfilAtivo();
+            const container = document.getElementById('listaCategoriasGerenciar');
+            container.innerHTML = '';
+            perfil.categorias.forEach(c => {
+                container.innerHTML += `
+                    <div class="flex items-center justify-between bg-darkBg border border-borderCol rounded-xl px-3 py-2">
+                        <span class="text-sm text-slate-200">${c}</span>
+                        <button onclick="removerCategoria('${c.replace(/'/g, "\\'")}')" class="text-slate-400 hover:text-rose-400 text-xs" title="Remover categoria">🗑️</button>
+                    </div>
+                `;
+            });
+        }
+
+        window.adicionarCategoria = function() {
+            const perfil = obterPerfilAtivo();
+            const input = document.getElementById('inputNovaCategoria');
+            const nome = input.value.trim();
+            if (!nome) return;
+
+            const jaExiste = perfil.categorias.some(c => c.toLowerCase() === nome.toLowerCase());
+            if (jaExiste) {
+                alert("Essa categoria já existe.");
+                return;
+            }
+
+            perfil.categorias.push(nome);
+            input.value = '';
+            renderizarListaCategoriasGerenciar();
+            salvarEstadoGeral();
+        }
+
+        window.removerCategoria = function(nome) {
+            const perfil = obterPerfilAtivo();
+            if (perfil.categorias.length <= 1) {
+                alert("Você precisa manter ao menos uma categoria cadastrada.");
+                return;
+            }
+            if (confirm(`Remover a categoria "${nome}"? Os lançamentos que já usam ela não serão apagados nem alterados.`)) {
+                perfil.categorias = perfil.categorias.filter(c => c !== nome);
+                renderizarListaCategoriasGerenciar();
+                salvarEstadoGeral();
+            }
+        }
+
+        // --- DIVISÃO DE DESPESA FAMILIAR ---
+        function atualizarSelectDivisaoFamiliar() {
+            const perfilAtivo = obterPerfilAtivo();
+            const select = document.getElementById('modalDivididoComId');
+            select.innerHTML = '';
+            const outrosMembros = db.perfis.filter(p => p.id !== perfilAtivo.id);
+            if (outrosMembros.length === 0) {
+                select.innerHTML = '<option value="">Nenhum outro perfil cadastrado</option>';
+                return;
+            }
+            outrosMembros.forEach(p => {
+                select.innerHTML += `<option value="${p.id}">${p.nome}</option>`;
+            });
+        }
+
+        window.alternarDivisaoFamiliar = function() {
+            const escopo = document.getElementById('modalEscopo').value;
+            const bloco = document.getElementById('divDivisaoFamiliar');
+            if (escopo === 'familiar') {
+                bloco.classList.remove('hidden');
+                atualizarSelectDivisaoFamiliar();
+            } else {
+                bloco.classList.add('hidden');
+                document.getElementById('modalDividir').checked = false;
+                document.getElementById('divSelectDivisao').classList.add('hidden');
+            }
+        }
+
+        window.alternarSelectDivisao = function() {
+            const marcado = document.getElementById('modalDividir').checked;
+            const divSelect = document.getElementById('divSelectDivisao');
+            if (marcado) {
+                divSelect.classList.remove('hidden');
+            } else {
+                divSelect.classList.add('hidden');
+            }
+        }
+
+        // --- GERENCIAMENTO DE TRANSAÇÕES ---
+        window.abrirModalTransacao = function(id = null) {
+            document.getElementById('modalEditId').value = '';
+            document.getElementById('formModalTransacao').reset();
+            document.getElementById('modalTitulo').innerText = 'Novo Lançamento';
+            document.getElementById('modalData').value = new Date().toISOString().split('T')[0];
+            atualizarSelectContasModal();
+            preencherSelectCategorias('modalCategoria');
+            alternarDivisaoFamiliar();
+
+            if (id) {
+                const perfil = obterPerfilAtivo();
+                const t = perfil.transacoes.find(tr => tr.id === id);
+                if (t) {
+                    document.getElementById('modalEditId').value = t.id;
+                    document.getElementById('modalTipo').value = t.tipo;
+                    document.getElementById('modalEscopo').value = t.escopo;
+                    document.getElementById('modalData').value = t.data;
+                    document.getElementById('modalDescricao').value = t.descricao;
+                    document.getElementById('modalValor').value = t.valor;
+                    const selectCategoria = document.getElementById('modalCategoria');
+                    if (t.categoria && ![...selectCategoria.options].some(o => o.value === t.categoria)) {
+                        selectCategoria.innerHTML += `<option value="${t.categoria}">${t.categoria} (categoria removida)</option>`;
+                    }
+                    selectCategoria.value = t.categoria || 'Geral';
+                    document.getElementById('modalConta').value = t.contaId;
+                    document.getElementById('modalFormaPagamento').value = t.formaPagamento || 'dinheiro';
+                    document.getElementById('modalTitulo').innerText = 'Editar Lançamento';
+
+                    alternarDivisaoFamiliar();
+                    if (t.escopo === 'familiar' && t.dividida && t.divididoComId) {
+                        document.getElementById('modalDividir').checked = true;
+                        alternarSelectDivisao();
+                        document.getElementById('modalDivididoComId').value = t.divididoComId;
+                    }
+                }
+            }
+            document.getElementById('modalTransacao').classList.remove('hidden');
+        }
+
+        window.fecharModalTransacao = function() {
+            document.getElementById('modalTransacao').classList.add('hidden');
+        }
+
+        window.salvarTransacaoModal = function(event) {
+            event.preventDefault();
+            const perfil = obterPerfilAtivo();
+            const editId = document.getElementById('modalEditId').value;
+            const tipo = document.getElementById('modalTipo').value;
+            const escopo = document.getElementById('modalEscopo').value;
+            const data = document.getElementById('modalData').value;
+            const descricao = document.getElementById('modalDescricao').value.trim();
+            const valor = parseFloat(document.getElementById('modalValor').value) || 0;
+            const categoria = document.getElementById('modalCategoria').value || 'Geral';
+            const contaId = document.getElementById('modalConta').value;
+            const formaPagamento = document.getElementById('modalFormaPagamento').value;
+            const dividida = escopo === 'familiar' && document.getElementById('modalDividir').checked;
+            const divididoComId = dividida ? document.getElementById('modalDivididoComId').value : null;
+
+            if (editId) {
+                const index = perfil.transacoes.findIndex(tr => tr.id === editId);
+                if (index !== -1) {
+                    perfil.transacoes[index] = { id: editId, tipo, escopo, data, descricao, valor, categoria, contaId, formaPagamento, dividida, divididoComId };
+                }
+            } else {
+                perfil.transacoes.push({
+                    id: 't_' + Date.now(),
+                    tipo,
+                    escopo,
+                    data,
+                    descricao,
+                    valor,
+                    categoria,
+                    contaId,
+                    formaPagamento,
+                    dividida,
+                    divididoComId
+                });
+            }
+
+            fecharModalTransacao();
+            salvarEstadoGeral();
+        }
+
+        window.apagarTransacao = function(id) {
+            const perfil = obterPerfilAtivo();
+            if (confirm("Deseja apagar este lançamento?")) {
+                perfil.transacoes = perfil.transacoes.filter(t => t.id !== id);
+                salvarEstadoGeral();
+            }
+        }
+
+        window.limparFiltroMesLancamentos = function() {
+            document.getElementById('filtroMesLancamentos').value = '';
+            renderizarTransacoes();
+        }
+
+        function renderizarTransacoes() {
+            const perfil = obterPerfilAtivo();
+            const tbody = document.getElementById('tabelaTransacoesCompleta');
+            tbody.innerHTML = '';
+
+            const mesFiltro = document.getElementById('filtroMesLancamentos').value; // formato "YYYY-MM" ou vazio
+            const transacoesFiltradas = mesFiltro
+                ? perfil.transacoes.filter(t => t.data.startsWith(mesFiltro))
+                : perfil.transacoes;
+
+            if (transacoesFiltradas.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" class="py-6 text-center text-slate-500">Nenhum lançamento encontrado${mesFiltro ? ' neste mês' : ''}.</td></tr>`;
+                return;
+            }
+
+            transacoesFiltradas.sort((a, b) => new Date(b.data) - new Date(a.data)).forEach(t => {
+                const conta = perfil.contas.find(c => c.id === t.contaId);
+                const nomeConta = conta ? conta.nome : 'Conta Removida';
+                const nomesFormaPagamento = { dinheiro: 'Dinheiro', pix: 'Pix', debito: 'Débito', credito: 'Crédito', boleto: 'Boleto' };
+                const nomeForma = nomesFormaPagamento[t.formaPagamento] || '-';
+                tbody.innerHTML += `
+                    <tr class="border-b border-borderCol hover:bg-slate-800/30">
+                        <td class="py-3"><span class="px-2 py-0.5 rounded text-xs ${t.escopo === 'familiar' ? 'bg-purple-500/10 text-purple-400' : 'bg-slate-800 text-slate-300'}">${t.escopo}</span></td>
+                        <td class="py-3 text-slate-300">${t.data.split('-').reverse().join('/')}</td>
+                        <td class="py-3 text-white font-medium">${t.descricao}</td>
+                        <td class="py-3 text-slate-300">${t.categoria}</td>
+                        <td class="py-3 text-slate-300">${nomeConta}</td>
+                        <td class="py-3 text-slate-300">${nomeForma}</td>
+                        <td class="py-3 text-right font-semibold ${t.tipo === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}">${t.tipo === 'INCOME' ? '+' : '-'} R$ ${t.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        <td class="py-3 text-center">
+                            <button onclick="abrirModalTransacao('${t.id}')" class="text-slate-400 hover:text-white mr-2">✏️</button>
+                            <button onclick="apagarTransacao('${t.id}')" class="text-slate-400 hover:text-rose-400">🗑️</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        function atualizarDashboard() {
+            const perfil = obterPerfilAtivo();
+            const hoje = new Date();
+            const mesAtual = hoje.toISOString().slice(0, 7);
+
+            let totalPatrimonio = 0;
+            let disponivelCorrente = 0;
+
+            perfil.contas.forEach(c => {
+                totalPatrimonio += c.saldo;
+                if (c.tipo === 'corrente') disponivelCorrente += c.saldo;
+            });
+
+            let entradasMes = 0;
+            let despesasMes = 0;
+            const categoriasDespesaMes = {};
+            const categoriasEntradaMes = {};
+
+            perfil.transacoes.forEach(t => {
+                if (t.data.startsWith(mesAtual)) {
+                    const cat = t.categoria || 'Geral';
+                    if (t.tipo === 'INCOME') {
+                        entradasMes += t.valor;
+                        categoriasEntradaMes[cat] = (categoriasEntradaMes[cat] || 0) + t.valor;
+                    }
+                    if (t.tipo === 'EXPENSE') {
+                        despesasMes += t.valor;
+                        categoriasDespesaMes[cat] = (categoriasDespesaMes[cat] || 0) + t.valor;
+                    }
+                }
+            });
+
+            document.getElementById('dashPatrimonio').innerText = `R$ ${totalPatrimonio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('dashDisponivel').innerText = `R$ ${disponivelCorrente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('dashEntradas').innerText = `R$ ${entradasMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('dashDespesas').innerText = `R$ ${despesasMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+
+            const teto = perfil.tetoMensal || 3000;
+            const percentual = Math.min(Math.round((despesasMes / teto) * 100), 100);
+            document.getElementById('txtStatusLimiteDetalhe').innerText = `Você gastou R$ ${despesasMes.toFixed(2)} de um teto de R$ ${teto.toFixed(2)}.`;
+            
+            const cardAlerta = document.getElementById('cardAlertaGasto');
+            cardAlerta.classList.remove('hidden');
+            document.getElementById('txtStatusLimitePercentual').innerText = `${percentual}%`;
+            document.getElementById('barraLimiteGasto').style.width = `${percentual}%`;
+
+            renderizarGraficoFluxo(entradasMes, despesasMes);
+            renderizarGraficoCategoriaMes('graficoDespesasCategoriaMes', 'chartDespesasCategoriaMesInstance', categoriasDespesaMes, 'Sem despesas');
+            renderizarGraficoCategoriaMes('graficoEntradasCategoriaMes', 'chartEntradasCategoriaMesInstance', categoriasEntradaMes, 'Sem entradas');
+        }
+
+        // Função genérica para desenhar um gráfico de pizza de categorias
+        // (reaproveitada para despesas e entradas do mês no Dashboard)
+        function renderizarGraficoCategoriaMes(canvasId, nomeInstancia, categoriasObj, textoVazio) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            if (window[nomeInstancia]) window[nomeInstancia].destroy();
+
+            const ordenado = Object.entries(categoriasObj).sort((a, b) => b[1] - a[1]);
+            const labels = ordenado.map(item => item[0]);
+            const data = ordenado.map(item => item[1]);
+
+            if (data.length === 0) {
+                labels.push(textoVazio);
+                data.push(1);
+            }
+
+            window[nomeInstancia] = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6', '#64748b', '#06b6d4', '#ec4899']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12 } } }
+                }
+            });
+        }
+
+        function renderizarGraficoFluxo(entradas, despesas) {
+            const ctx = document.getElementById('graficoFluxo').getContext('2d');
+            if (chartFluxoInstance) chartFluxoInstance.destroy();
+            chartFluxoInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Entradas', 'Despesas'],
+                    datasets: [{
+                        data: [entradas, despesas],
+                        backgroundColor: ['#10b981', '#f43f5e'],
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { grid: { color: '#1e293b' } }, x: { grid: { display: false } } }
+                }
+            });
+        }
+
+        window.definirLimiteMensalPrompt = function() {
+            const perfil = obterPerfilAtivo();
+            const novo = prompt("Informe o novo teto de gastos mensal:", perfil.tetoMensal || 3000);
+            if (novo !== null && !isNaN(parseFloat(novo))) {
+                perfil.tetoMensal = parseFloat(novo);
+                salvarEstadoGeral();
+            }
+        }
+
+        function renderizarVisaoFamiliar() {
+            const tbody = document.getElementById('tabelaFamiliar');
+            tbody.innerHTML = '';
+            let famPat = 0, famEnt = 0, famDes = 0;
+            const contribuicoes = {};
+
+            // deveMap[idDevedor][idCredor] = quanto o devedor deve ao credor (soma das metades)
+            const deveMap = {};
+            function registrarDivida(idDevedor, idCredor, valorMetade) {
+                if (!deveMap[idDevedor]) deveMap[idDevedor] = {};
+                deveMap[idDevedor][idCredor] = (deveMap[idDevedor][idCredor] || 0) + valorMetade;
+            }
+
+            db.perfis.forEach(p => {
+                p.contas.forEach(c => famPat += c.saldo);
+                p.transacoes.forEach(t => {
+                    if (t.escopo === 'familiar') {
+                        if (t.tipo === 'INCOME') famEnt += t.valor;
+                        if (t.tipo === 'EXPENSE') {
+                            famDes += t.valor;
+                            contribuicoes[p.nome] = (contribuicoes[p.nome] || 0) + t.valor;
+
+                            let infoDivisao = '-';
+                            if (t.dividida && t.divididoComId) {
+                                const membroDivisao = db.perfis.find(mp => mp.id === t.divididoComId);
+                                if (membroDivisao) {
+                                    infoDivisao = `Dividido com ${membroDivisao.nome}`;
+                                    registrarDivida(membroDivisao.id, p.id, t.valor / 2);
+                                }
+                            }
+
+                            tbody.innerHTML += `
+                                <tr class="border-b border-borderCol">
+                                    <td class="py-3"><span class="px-2 py-0.5 rounded text-xs bg-purple-500/10 text-purple-400">familiar</span></td>
+                                    <td class="py-3 text-white font-medium">${p.nome}</td>
+                                    <td class="py-3 text-slate-300">${t.data.split('-').reverse().join('/')}</td>
+                                    <td class="py-3 text-slate-300">${t.descricao}</td>
+                                    <td class="py-3 text-slate-300">${t.categoria}</td>
+                                    <td class="py-3 text-slate-300">${infoDivisao}</td>
+                                    <td class="py-3 text-right text-rose-400 font-semibold">- R$ ${t.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                </tr>
+                            `;
+                        }
+                    }
+                });
+            });
+
+            document.getElementById('famPatrimonio').innerText = `R$ ${famPat.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('famEntradas').innerText = `R$ ${famEnt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('famDespesas').innerText = `R$ ${famDes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+
+            // Calcula o saldo líquido entre cada par de membros (compensando dívidas nos dois sentidos)
+            const divSaldo = document.getElementById('listaSaldoMembros');
+            divSaldo.innerHTML = '';
+            const paresProcessados = new Set();
+            let existeDivisao = false;
+
+            Object.keys(deveMap).forEach(idA => {
+                Object.keys(deveMap[idA]).forEach(idB => {
+                    const chavePar = [idA, idB].sort().join('|');
+                    if (paresProcessados.has(chavePar)) return;
+                    paresProcessados.add(chavePar);
+                    existeDivisao = true;
+
+                    const aDeveParaB = (deveMap[idA] && deveMap[idA][idB]) || 0;
+                    const bDeveParaA = (deveMap[idB] && deveMap[idB][idA]) || 0;
+                    const nomeA = (db.perfis.find(p => p.id === idA) || {}).nome || 'Membro removido';
+                    const nomeB = (db.perfis.find(p => p.id === idB) || {}).nome || 'Membro removido';
+                    const liquido = aDeveParaB - bDeveParaA;
+
+                    let texto, valorAbs;
+                    if (liquido > 0.005) {
+                        texto = `${nomeA} deve para ${nomeB}`;
+                        valorAbs = liquido;
+                    } else if (liquido < -0.005) {
+                        texto = `${nomeB} deve para ${nomeA}`;
+                        valorAbs = -liquido;
+                    } else {
+                        texto = `${nomeA} e ${nomeB} estão quites`;
+                        valorAbs = 0;
+                    }
+
+                    divSaldo.innerHTML += `
+                        <div class="bg-darkBg border border-borderCol p-4 rounded-xl">
+                            <p class="text-xs text-slate-400">${texto}</p>
+                            <h4 class="text-xl font-bold ${valorAbs > 0 ? 'text-rose-400' : 'text-emerald-400'} mt-1">R$ ${valorAbs.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h4>
+                        </div>
+                    `;
+                });
+            });
+
+            if (!existeDivisao) {
+                divSaldo.innerHTML = '<p class="text-xs text-slate-500 col-span-full">Nenhuma despesa dividida entre membros até o momento.</p>';
+            }
+
+            const divCont = document.getElementById('listaContribuicoesFamiliares');
+            divCont.innerHTML = '';
+            for (const [membro, total] of Object.entries(contribuicoes)) {
+                divCont.innerHTML += `
+                    <div class="bg-darkBg border border-borderCol p-4 rounded-xl">
+                        <p class="text-xs text-slate-400">Pago por ${membro}</p>
+                        <h4 class="text-xl font-bold text-white mt-1">R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h4>
+                    </div>
+                `;
+            }
+        }
+
+        function renderizarInvestimentos() {
+            const perfil = obterPerfilAtivo();
+            const tbody = document.getElementById('tabelaInvestimentos');
+            tbody.innerHTML = '';
+            let totalInv = 0;
+
+            perfil.contas.filter(c => c.tipo === 'investimento').forEach(c => {
+                totalInv += c.saldo;
+                tbody.innerHTML += `
+                    <tr class="border-b border-borderCol">
+                        <td class="py-3 text-white font-medium">${c.nome}</td>
+                        <td class="py-3 text-right text-emerald-400 font-semibold">R$ ${c.saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                `;
+            });
+            document.getElementById('invTotal').innerText = `R$ ${totalInv.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+        }
+
+        // --- GERENCIAMENTO DE DÍVIDAS ---
+
+        // Gera as transações (despesas) mensais referentes às parcelas restantes de uma dívida.
+        // É isso que faz a parcela aparecer automaticamente no Dashboard e no Panorama Anual:
+        // ela vira uma transação normal, só que criada em lote e marcada com "dividaId".
+        function gerarParcelasDaDivida(divida) {
+            const parcelas = [];
+            const [anoIni, mesIni] = divida.mesInicial.split('-').map(Number);
+            for (let i = 0; i < divida.parcelasRestantes; i++) {
+                const indiceMesTotal = (mesIni - 1) + i;
+                const ano = anoIni + Math.floor(indiceMesTotal / 12);
+                const mes = (indiceMesTotal % 12) + 1;
+                const dataParcela = `${ano}-${String(mes).padStart(2, '0')}-01`;
+                parcelas.push({
+                    id: `divparc_${divida.id}_${i}`,
+                    tipo: 'EXPENSE',
+                    escopo: divida.escopo,
+                    data: dataParcela,
+                    descricao: `${divida.nome} (parcela ${i + 1}/${divida.parcelasRestantes})`,
+                    valor: divida.valorParcela,
+                    categoria: divida.categoria || 'Dívidas',
+                    contaId: divida.contaId,
+                    formaPagamento: divida.formaPagamento,
+                    dividaId: divida.id
+                });
+            }
+            return parcelas;
+        }
+
+        window.abrirModalDivida = function(id = null) {
+            document.getElementById('modalDividaEditId').value = '';
+            document.getElementById('formModalDivida').reset();
+            document.getElementById('modalDividaTitulo').innerText = 'Nova Dívida';
+            preencherSelectContas('modalDividaContaId');
+            preencherSelectCategorias('modalDividaCategoria');
+            document.getElementById('modalDividaMesInicial').value = new Date().toISOString().slice(0, 7);
+            const selectCategoriaDivida = document.getElementById('modalDividaCategoria');
+            if ([...selectCategoriaDivida.options].some(o => o.value === 'Dívidas')) {
+                selectCategoriaDivida.value = 'Dívidas';
+            }
+
+            if (id) {
+                const perfil = obterPerfilAtivo();
+                const divida = perfil.dividas.find(d => d.id === id);
+                if (divida) {
+                    // As parcelas restantes "de verdade" são recalculadas a partir de hoje,
+                    // já que meses passados não devem ser regerados.
+                    const mesAtualStr = new Date().toISOString().slice(0, 7);
+                    const parcelasFuturas = perfil.transacoes
+                        .filter(t => t.dividaId === id && t.data >= `${mesAtualStr}-01`)
+                        .sort((a, b) => a.data.localeCompare(b.data));
+
+                    document.getElementById('modalDividaEditId').value = divida.id;
+                    document.getElementById('modalDividaNome').value = divida.nome;
+                    document.getElementById('modalDividaValorParcela').value = divida.valorParcela;
+                    document.getElementById('modalDividaParcelasRestantes').value = parcelasFuturas.length || divida.parcelasRestantes;
+                    document.getElementById('modalDividaMesInicial').value = parcelasFuturas.length > 0 ? parcelasFuturas[0].data.slice(0, 7) : mesAtualStr;
+                    document.getElementById('modalDividaEscopo').value = divida.escopo || 'pessoal';
+                    if (divida.categoria && ![...selectCategoriaDivida.options].some(o => o.value === divida.categoria)) {
+                        selectCategoriaDivida.innerHTML += `<option value="${divida.categoria}">${divida.categoria} (categoria removida)</option>`;
+                    }
+                    selectCategoriaDivida.value = divida.categoria || 'Dívidas';
+                    document.getElementById('modalDividaContaId').value = divida.contaId;
+                    document.getElementById('modalDividaFormaPagamento').value = divida.formaPagamento || 'boleto';
+                    document.getElementById('modalDividaTitulo').innerText = 'Editar Dívida';
+                }
+            }
+            document.getElementById('modalFormDivida').classList.remove('hidden');
+        }
+
+        window.fecharModalDivida = function() {
+            document.getElementById('modalFormDivida').classList.add('hidden');
+        }
+
+        window.salvarDividaModal = function(event) {
+            event.preventDefault();
+            const perfil = obterPerfilAtivo();
+            perfil.dividas = perfil.dividas || [];
+
+            const editId = document.getElementById('modalDividaEditId').value;
+            const nome = document.getElementById('modalDividaNome').value.trim();
+            const valorParcela = parseFloat(document.getElementById('modalDividaValorParcela').value) || 0;
+            const parcelasRestantes = parseInt(document.getElementById('modalDividaParcelasRestantes').value, 10) || 0;
+            const mesInicial = document.getElementById('modalDividaMesInicial').value;
+            const escopo = document.getElementById('modalDividaEscopo').value;
+            const categoria = document.getElementById('modalDividaCategoria').value || 'Dívidas';
+            const contaId = document.getElementById('modalDividaContaId').value;
+            const formaPagamento = document.getElementById('modalDividaFormaPagamento').value;
+
+            if (!mesInicial || parcelasRestantes <= 0) {
+                alert("Informe ao menos 1 parcela restante e o mês da próxima parcela.");
+                return;
+            }
+
+            const dividaId = editId || ('div_' + Date.now());
+            const divida = { id: dividaId, nome, valorParcela, parcelasRestantes, mesInicial, escopo, categoria, contaId, formaPagamento };
+
+            if (editId) {
+                const index = perfil.dividas.findIndex(d => d.id === editId);
+                if (index !== -1) perfil.dividas[index] = divida;
+                // Remove as parcelas antigas geradas para essa dívida e cria as novas,
+                // com os valores/quantidade atualizados.
+                perfil.transacoes = perfil.transacoes.filter(t => t.dividaId !== editId);
+            } else {
+                perfil.dividas.push(divida);
+            }
+
+            perfil.transacoes = perfil.transacoes.concat(gerarParcelasDaDivida(divida));
+
+            fecharModalDivida();
+            salvarEstadoGeral();
+        }
+
+        window.apagarDivida = function(id) {
+            const perfil = obterPerfilAtivo();
+            if (confirm("Deseja apagar esta dívida e todas as parcelas futuras já lançadas por ela? As parcelas de meses passados continuam no histórico.")) {
+                perfil.dividas = perfil.dividas.filter(d => d.id !== id);
+                perfil.transacoes = perfil.transacoes.filter(t => t.dividaId !== id);
+                salvarEstadoGeral();
+            }
+        }
+
+        function renderizarDividas() {
+            const perfil = obterPerfilAtivo();
+            perfil.dividas = perfil.dividas || [];
+            const grid = document.getElementById('gridDividas');
+            grid.innerHTML = '';
+
+            const mesAtualStr = new Date().toISOString().slice(0, 7);
+            const inicioMesAtual = `${mesAtualStr}-01`;
+            const transacoesDeDividas = perfil.transacoes.filter(t => t.dividaId);
+
+            let qtdAtivas = 0;
+            let comprometidoMes = 0;
+            let totalRestante = 0;
+
+            transacoesDeDividas.forEach(t => {
+                if (t.data.startsWith(mesAtualStr)) comprometidoMes += t.valor;
+                if (t.data >= inicioMesAtual) totalRestante += t.valor;
+            });
+
+            if (perfil.dividas.length === 0) {
+                grid.innerHTML = '<p class="text-xs text-slate-500 col-span-full text-center py-6">Nenhuma dívida cadastrada. Clique em "＋ Nova Dívida" para começar.</p>';
+            } else {
+                perfil.dividas.forEach(d => {
+                    const parcelasDaDivida = transacoesDeDividas.filter(t => t.dividaId === d.id && t.data >= inicioMesAtual);
+                    const parcelasRestantesAtual = parcelasDaDivida.length;
+                    const valorRestante = parcelasRestantesAtual * d.valorParcela;
+                    const quitada = parcelasRestantesAtual === 0;
+                    if (!quitada) qtdAtivas++;
+
+                    grid.innerHTML += `
+                        <div class="bg-cardBg border border-borderCol p-5 rounded-xl space-y-3">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <span class="text-xs px-2 py-0.5 rounded font-medium ${quitada ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}">${quitada ? 'Quitada' : 'Ativa'}</span>
+                                    <h3 class="font-bold text-white text-lg mt-1">${d.nome}</h3>
+                                    <p class="text-xs text-slate-400 mt-0.5">${d.escopo === 'familiar' ? 'Familiar' : 'Pessoal'} · ${d.categoria || 'Dívidas'}</p>
+                                </div>
+                                <div class="flex gap-1">
+                                    <button onclick="abrirModalDivida('${d.id}')" class="p-1 text-slate-400 hover:text-white" title="Editar">✏️</button>
+                                    <button onclick="apagarDivida('${d.id}')" class="p-1 text-slate-400 hover:text-rose-400" title="Apagar">🗑️</button>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <p class="text-xs text-slate-400">Parcela Mensal</p>
+                                    <h4 class="text-lg font-bold text-white">R$ ${d.valorParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h4>
+                                </div>
+                                <div>
+                                    <p class="text-xs text-slate-400">Parcelas Restantes</p>
+                                    <h4 class="text-lg font-bold text-white">${parcelasRestantesAtual}</h4>
+                                </div>
+                            </div>
+                            <div>
+                                <p class="text-xs text-slate-400">Valor Total Restante</p>
+                                <h4 class="text-xl font-bold ${quitada ? 'text-emerald-400' : 'text-rose-400'}">R$ ${valorRestante.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h4>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            document.getElementById('dividasQtdAtivas').innerText = qtdAtivas;
+            document.getElementById('dividasComprometidoMes').innerText = `R$ ${comprometidoMes.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('dividasTotalRestante').innerText = `R$ ${totalRestante.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+        }
+
+        window.atualizarPanoramaGeral = function() {
+            const perfil = obterPerfilAtivo();
+            const selectAno = document.getElementById('filtroAnoPanorama');
+            
+            const anosDisponiveis = [...new Set(perfil.transacoes.map(t => t.data.slice(0, 4)))];
+            const anoAtualStr = new Date().getFullYear().toString();
+            if (!anosDisponiveis.includes(anoAtualStr)) anosDisponiveis.push(anoAtualStr);
+            anosDisponiveis.sort().reverse();
+
+            const anoSelecionado = selectAno.value && anosDisponiveis.includes(selectAno.value) ? selectAno.value : anosDisponiveis[0];
+
+            selectAno.innerHTML = '';
+            anosDisponiveis.forEach(ano => {
+                selectAno.innerHTML += `<option value="${ano}" ${ano === anoSelecionado ? 'selected' : ''}>${ano}</option>`;
+            });
+
+            const mesesNomes = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+            const dadosMensaisEntradas = new Array(12).fill(0);
+            const dadosMensaisDespesas = new Array(12).fill(0);
+            const categoriasAno = {};
+
+            let totalEntradasAno = 0;
+            let totalDespesasAno = 0;
+
+            perfil.transacoes.forEach(t => {
+                if (t.data.startsWith(anoSelecionado)) {
+                    const mesIndex = parseInt(t.data.slice(5, 7), 10) - 1;
+                    if (mesIndex >= 0 && mesIndex < 12) {
+                        if (t.tipo === 'INCOME') {
+                            dadosMensaisEntradas[mesIndex] += t.valor;
+                            totalEntradasAno += t.valor;
+                        } else if (t.tipo === 'EXPENSE') {
+                            dadosMensaisDespesas[mesIndex] += t.valor;
+                            totalDespesasAno += t.valor;
+                            const cat = t.categoria || 'Geral';
+                            categoriasAno[cat] = (categoriasAno[cat] || 0) + t.valor;
+                        }
+                    }
+                }
+            });
+
+            document.getElementById('panoEntradasAno').innerText = `R$ ${totalEntradasAno.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            document.getElementById('panoDespesasAno').innerText = `R$ ${totalDespesasAno.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            const balancoAno = totalEntradasAno - totalDespesasAno;
+            const elBalanco = document.getElementById('panoBalancoAno');
+            elBalanco.innerText = `R$ ${balancoAno.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+            elBalanco.className = `text-2xl font-bold ${balancoAno >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+
+            const tbodyMeses = document.getElementById('tabelaMesAMes');
+            tbodyMeses.innerHTML = '';
+            for (let i = 0; i < 12; i++) {
+                const ent = dadosMensaisEntradas[i];
+                const des = dadosMensaisDespesas[i];
+                const res = ent - des;
+                if (ent > 0 || des > 0) {
+                    tbodyMeses.innerHTML += `
+                        <tr class="border-b border-borderCol hover:bg-slate-800/30">
+                            <td class="py-3 font-medium text-white">${mesesNomes[i]}</td>
+                            <td class="py-3 text-right text-emerald-400">+ R$ ${ent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                            <td class="py-3 text-right text-rose-400">- R$ ${des.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                            <td class="py-3 text-right font-semibold ${res >= 0 ? 'text-emerald-400' : 'text-rose-400'}">R$ ${res.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                    `;
+                }
+            }
+            if (tbodyMeses.innerHTML === '') {
+                tbodyMeses.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-slate-500">Nenhum lançamento registrado no ano ${anoSelecionado}.</td></tr>`;
+            }
+
+            renderizarGraficoEvolucaoMensal(mesesNomes, dadosMensaisEntradas, dadosMensaisDespesas);
+            renderizarGraficoCategoriasAno(categoriasAno);
+        }
+
+        function renderizarGraficoEvolucaoMensal(labels, entradas, despesas) {
+            const ctx = document.getElementById('graficoEvolucaoMensal').getContext('2d');
+            if (chartEvolucaoInstance) chartEvolucaoInstance.destroy();
+            chartEvolucaoInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Entradas', data: entradas, backgroundColor: '#10b981', borderRadius: 4 },
+                        { label: 'Despesas', data: despesas, backgroundColor: '#f43f5e', borderRadius: 4 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#94a3b8' } } },
+                    scales: { y: { grid: { color: '#1e293b' } }, x: { grid: { display: false } } }
+                }
+            });
+        }
+
+        function renderizarGraficoCategoriasAno(catObj) {
+            const ctx = document.getElementById('graficoCategoriasAno').getContext('2d');
+            if (chartCategoriasInstance) chartCategoriasInstance.destroy();
+
+            const sortedCat = Object.entries(catObj).sort((a, b) => b[1] - a[1]).slice(0, 5);
+            const labels = sortedCat.map(item => item[0]);
+            const data = sortedCat.map(item => item[1]);
+
+            if (data.length === 0) {
+                labels.push('Sem gastos');
+                data.push(1);
+            }
+
+            chartCategoriasInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6', '#64748b']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12 } } }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
